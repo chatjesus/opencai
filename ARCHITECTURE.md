@@ -1,6 +1,6 @@
-# ClawFans Architecture
+# opencai Architecture
 
-A map of how ClawFans is built — for anyone reading the code or forking it.
+A map of how opencai is built — for anyone reading the code or forking it.
 For setup/run instructions see [README.md](README.md); this doc is about the
 *shape* of the system and where to plug in.
 
@@ -8,7 +8,7 @@ For setup/run instructions see [README.md](README.md); this doc is about the
 
 ## 1. The one-paragraph mental model
 
-ClawFans is a **local-first AI character chat app**. A **Next.js** frontend
+opencai is a **local-first AI character chat app**. A **Next.js** frontend
 talks to a **FastAPI** backend over a simple REST + Server-Sent-Events (SSE)
 API. The backend turns each character into a layered prompt and streams a reply
 from a **local Ollama LLM**. On top of plain chat it layers *relationship
@@ -43,7 +43,7 @@ a single **SQLite** file.
 ## 2. Repository layout
 
 ```
-clawfans/                      (git root; folder may be named synclub-local)
+opencai/                       (git root)
 ├── backend/                   FastAPI + SQLite + SQLAlchemy
 │   ├── main.py                App factory, lifespan, CORS, character seeding
 │   ├── api/                   HTTP routers (thin — delegate to services/)
@@ -255,7 +255,7 @@ to `BACKEND_URL` via `next.config.ts`), Clerk publishable/secret keys.
 
 ---
 
-## 11. Extending ClawFans
+## 11. Extending opencai
 
 - **Add a character:** UI "Create", `POST /api/characters` (auth required), or
   seed in `main.py::seed_characters`. Add translations via the

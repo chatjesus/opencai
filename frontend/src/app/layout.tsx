@@ -5,7 +5,7 @@ import Sidebar from "@/components/Sidebar";
 import { I18nProvider } from "@/contexts/I18nContext";
 
 export const metadata: Metadata = {
-  title: "ClawFans — Uncensored AI Companions",
+  title: "opencai — Uncensored AI Companions",
   description: "Private, uncensored AI character chat. Powered by local LLM.",
 };
 

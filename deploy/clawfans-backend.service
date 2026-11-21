@@ -1,4 +1,4 @@
-# systemd service for ClawFans backend (FastAPI + Uvicorn)
+# systemd service for opencai backend (FastAPI + Uvicorn)
 # Place at: /etc/systemd/system/clawfans-backend.service
 # Then:
 #   systemctl daemon-reload
@@ -6,7 +6,7 @@
 #   systemctl start clawfans-backend
 
 [Unit]
-Description=ClawFans Backend (FastAPI)
+Description=opencai Backend (FastAPI)
 After=network.target ollama.service
 Wants=ollama.service
 

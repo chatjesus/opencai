@@ -1,6 +1,6 @@
 @echo off
 echo ========================================
-echo   ClawFans - Backend Server
+echo   opencai - Backend Server
 echo ========================================
 echo.
 

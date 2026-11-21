@@ -1,5 +1,5 @@
 """
-ClawFans – Uncensored AI Character Chat Platform
+opencai – Uncensored AI Character Chat Platform
 Main application entry point.
 """
 import os
@@ -489,7 +489,7 @@ def seed_characters(db):
 async def lifespan(app: FastAPI):
     """Application startup/shutdown."""
     # Startup
-    print("[START] Starting ClawFans...")
+    print("[START] Starting opencai...")
     init_db()
     print("[OK] Database initialized")
 
@@ -538,11 +538,11 @@ async def lifespan(app: FastAPI):
         await _stop_telegram()
     except Exception:
         pass
-    print("[STOP] ClawFans shutting down...")
+    print("[STOP] opencai shutting down...")
 
 
 app = FastAPI(
-    title="ClawFans",
+    title="opencai",
     description="Uncensored AI Character Chat Platform",
     version="0.2.0",
     lifespan=lifespan,
@@ -605,7 +605,7 @@ async def root():
     """Friendly root — this port is the API backend, not the web UI.
     Avoids a bare {"detail":"Not Found"} when someone opens :8000 directly."""
     return {
-        "service": "ClawFans API",
+        "service": "opencai API",
         "ui": "The web app runs on the frontend (default http://localhost:3000)",
         "health": "/api/health",
         "docs": "/docs",

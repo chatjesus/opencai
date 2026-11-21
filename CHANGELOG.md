@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the ClawFans project are documented here.
+All notable changes to the opencai project are documented here.
 
 ---
 

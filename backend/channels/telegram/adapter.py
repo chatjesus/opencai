@@ -60,7 +60,7 @@ async def _get_db():
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command."""
     await update.message.reply_text(
-        "Welcome to ClawFans!\n\n"
+        "Welcome to opencai!\n\n"
         "I'm your AI character chat companion.\n\n"
         "Commands:\n"
         "  /char - List or switch characters\n"

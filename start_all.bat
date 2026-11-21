@@ -1,6 +1,6 @@
 @echo off
 echo ========================================
-echo   ClawFans - Starting All Services
+echo   opencai - Starting All Services
 echo ========================================
 echo.
 
@@ -29,16 +29,16 @@ if errorlevel 1 (
 :: Start backend
 echo.
 echo [3/3] Starting servers...
-start "ClawFans Backend" cmd /c "cd /d %~dp0backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+start "opencai Backend" cmd /c "cd /d %~dp0backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
 
 timeout /t 3 >nul
 
 :: Start frontend
-start "ClawFans Frontend" cmd /c "cd /d %~dp0frontend && npm run dev"
+start "opencai Frontend" cmd /c "cd /d %~dp0frontend && npm run dev"
 
 echo.
 echo ========================================
-echo   ClawFans is starting!
+echo   opencai is starting!
 echo   App:      http://localhost:3000
 echo   API:      http://localhost:8000
 echo   API Docs: http://localhost:8000/docs

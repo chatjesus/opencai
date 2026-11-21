@@ -1,6 +1,6 @@
-# ClawFans — $0 试用部署（Cloudflare 快速隧道）
+# opencai — $0 试用部署（Cloudflare 快速隧道）
 
-把跑在你本机（RTX 5090）上的 ClawFans 暴露给外部用户试用，**零基础设施成本**：
+把跑在你本机（RTX 5090）上的 opencai 暴露给外部用户试用，**零基础设施成本**：
 不用买服务器、不用公网 IP、不用开路由器端口、不用 Cloudflare 账号。
 
 ```

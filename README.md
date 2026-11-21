@@ -1,4 +1,4 @@
-# ClawFans
+# opencai
 
 **Uncensored AI Character Chat Platform** — run fully local with Ollama.
 
@@ -77,8 +77,8 @@ Without ComfyUI, the image generation API falls back to placeholders. Characters
 ### Option A — Docker (recommended for most users)
 
 ```bash
-git clone https://github.com/claude-office-skills/ClawFans.git
-cd ClawFans
+git clone https://github.com/chatjesus/opencai.git
+cd opencai
 
 # 1. Configure environment
 cp backend/.env.example backend/.env        # edit as needed
@@ -180,7 +180,7 @@ CLERK_SECRET_KEY=sk_test_...                      # optional
 
 ## Image Generation
 
-ClawFans supports two image backends:
+opencai supports two image backends:
 
 | Backend | Setup | Quality | Cost |
 |---------|-------|---------|------|
@@ -214,7 +214,7 @@ python ..\scripts\translate_chars_direct.py --locale en --char-id 1
 ## Project Structure
 
 ```
-ClawFans/
+opencai/
 ├── backend/                    # FastAPI + SQLite
 │   ├── api/                    # REST endpoints (characters, chat, upload…)
 │   ├── models/                 # SQLAlchemy ORM models + Pydantic schemas

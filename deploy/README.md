@@ -1,4 +1,4 @@
-# ClawFans VPS Deployment Guide
+# opencai VPS Deployment Guide
 
 Target: `clawfans.tinyclaw.dev` on Hetzner CAX31 (Ubuntu 24.04)
 
@@ -23,25 +23,15 @@ TTL: 300
 
 Wait for DNS to propagate (usually 1–5 min with Hetzner DNS).
 
-### Step 3 — Push Code to Git
+### Step 3 — Choose the source repository
 
-If not already on GitHub:
-```bash
-cd C:\Users\PRO\Desktop\CUDA\synclub-local
-git init
-git add .
-git commit -m "initial deploy"
-git remote add origin https://github.com/YOUR_USERNAME/synclub-local.git
-git push -u origin main
-```
-
-Update `REPO_URL` in `deploy/setup-vps.sh` with your actual repo URL.
+The setup script clones `https://github.com/chatjesus/opencai.git`. To deploy your own fork, set `REPO_URL` in your copy of `deploy/setup-vps.sh` and use the copy instructions in Step 4.
 
 ### Step 4 — Run Setup Script on VPS
 
 ```bash
 ssh root@<VPS_IP>
-curl -O https://raw.githubusercontent.com/YOUR_USERNAME/synclub-local/main/deploy/setup-vps.sh
+curl -O https://raw.githubusercontent.com/chatjesus/opencai/master/deploy/setup-vps.sh
 bash setup-vps.sh
 ```
 

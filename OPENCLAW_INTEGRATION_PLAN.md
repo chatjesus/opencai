@@ -1,8 +1,8 @@
-# ClawFans x OpenClaw Integration Plan (Detailed)
+# opencai x OpenClaw Integration Plan (Detailed)
 
 ## 1. Purpose and Scope
 
-This document defines a practical integration roadmap to evolve `synclub-local` from a web-only character chat app into a multi-platform, action-capable, memory-driven character system inspired by OpenClaw architecture.
+This document defines a practical integration roadmap to evolve `opencai` from a web-only character chat app into a multi-platform, action-capable, memory-driven character system inspired by OpenClaw architecture.
 
 ### 1.1 Product Goal
 
@@ -30,7 +30,7 @@ Build a character platform where the same character can:
 
 ## 2. Current System Snapshot
 
-Current stack in `synclub-local`:
+Current stack in `opencai`:
 
 - Backend: FastAPI + SQLite + Ollama (Qwen)
 - Frontend: Next.js

@@ -272,7 +272,7 @@ export default function Sidebar() {
               <path d="M6 3 Q4.5 11 7 22" stroke="#f4a0b0" strokeWidth="0.8" strokeLinecap="round" opacity="0.5"/>
               <path d="M11 2 Q9.5 11 11 23" stroke="#f4a0b0" strokeWidth="0.8" strokeLinecap="round" opacity="0.5"/>
               <path d="M16 3 Q15 11 16 22" stroke="#f4a0b0" strokeWidth="0.8" strokeLinecap="round" opacity="0.5"/>
-              <text x="26" y="20" fontFamily="system-ui, -apple-system, sans-serif" fontWeight="800" fontSize="15" fill="white" letterSpacing="-0.3">Claw<tspan fill="#e8607a">Fans</tspan></text>
+              <text x="26" y="20" fontFamily="system-ui, -apple-system, sans-serif" fontWeight="800" fontSize="15" fill="white" letterSpacing="-0.3">open<tspan fill="#e8607a">cai</tspan></text>
             </svg>
           )}
         </button>

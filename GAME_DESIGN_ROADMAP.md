@@ -1,4 +1,4 @@
-# ClawFans — Gamification & Intimacy Progression Roadmap
+# opencai — Gamification & Intimacy Progression Roadmap
 
 ## Design Philosophy
 

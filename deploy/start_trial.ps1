@@ -1,4 +1,4 @@
-# ClawFans $0 trial launcher — backend + frontend (prod) + Cloudflare quick tunnel.
+# opencai $0 trial launcher — backend + frontend (prod) + Cloudflare quick tunnel.
 # Usage:  powershell -ExecutionPolicy Bypass -File deploy\start_trial.ps1
 # Prereqs: ollama running w/ an abliterated model; `npm run build` done in frontend/;
 #          cloudflared installed (winget install --id Cloudflare.cloudflared).
@@ -9,7 +9,7 @@ $backend = Join-Path $root "backend"
 $frontend = Join-Path $root "frontend"
 $py = Join-Path $backend "venv\Scripts\python.exe"
 
-Write-Host "=== ClawFans trial launcher ===" -ForegroundColor Cyan
+Write-Host "=== opencai trial launcher ===" -ForegroundColor Cyan
 
 # Preflight: cloudflared present?
 if (-not (Get-Command cloudflared -ErrorAction SilentlyContinue)) {

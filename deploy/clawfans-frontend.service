@@ -1,4 +1,4 @@
-# systemd service for ClawFans frontend (Next.js production)
+# systemd service for opencai frontend (Next.js production)
 # Place at: /etc/systemd/system/clawfans-frontend.service
 # Then:
 #   systemctl daemon-reload
@@ -6,7 +6,7 @@
 #   systemctl start clawfans-frontend
 
 [Unit]
-Description=ClawFans Frontend (Next.js)
+Description=opencai Frontend (Next.js)
 After=network.target clawfans-backend.service
 
 [Service]

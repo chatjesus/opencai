@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# ClawFans VPS Setup Script
+# opencai VPS Setup Script
 # Run as root on a fresh Ubuntu 24.04 server
 # Usage: bash setup-vps.sh
 # ============================================================
@@ -9,11 +9,11 @@ set -e
 DOMAIN="clawfans.tinyclaw.dev"
 APP_USER="clawfans"
 APP_DIR="/opt/clawfans"
-REPO_URL="https://github.com/YOUR_USERNAME/synclub-local.git"  # update this
+REPO_URL="https://github.com/chatjesus/opencai.git"
 OLLAMA_MODEL="qwen2.5:14b"
 
 echo "======================================================"
-echo "  ClawFans VPS Setup for $DOMAIN"
+echo "  opencai VPS Setup for $DOMAIN"
 echo "======================================================"
 
 # ── 1. System updates ──────────────────────────────────────

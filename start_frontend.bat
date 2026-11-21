@@ -1,6 +1,6 @@
 @echo off
 echo ========================================
-echo   ClawFans - Frontend (Next.js)
+echo   opencai - Frontend (Next.js)
 echo ========================================
 echo.
 

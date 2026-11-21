@@ -127,7 +127,7 @@ async def import_character(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """Import a SillyTavern / Janitor character card into ClawFans.
+    """Import a SillyTavern / Janitor character card into opencai.
 
     Accepts both the v2 wrapper shape ({"spec": ..., "data": {...}}) and the
     flat shape. Requires auth — the caller becomes the creator. The imported
