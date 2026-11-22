@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useAppAuth } from "@/contexts/AuthContext";
 import {
   fetchOpsConfig,
   updateOpsConfig,
@@ -64,6 +65,7 @@ const BOOLEAN_FIELDS: { key: keyof OpsConfig; label: string; hint: string }[] = 
 ];
 
 export default function AdminPage() {
+  const { isLoaded, getToken } = useAppAuth();
   const [adminToken, setAdminToken] = useState("");
   const [config, setConfig] = useState<OpsConfig | null>(null);
   const [loading, setLoading] = useState(false);
@@ -82,7 +84,7 @@ export default function AdminPage() {
     setLoadError(null);
     setSaveMsg(null);
     try {
-      const cfg = await fetchOpsConfig(token || null);
+      const cfg = await fetchOpsConfig(token || null, await getToken());
       setConfig(cfg);
     } catch (e) {
       setConfig(null);
@@ -90,14 +92,14 @@ export default function AdminPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [getToken]);
 
   // Load on mount and whenever the stored token changes.
   useEffect(() => {
+    if (!isLoaded) return;
     const stored = typeof window !== "undefined" ? localStorage.getItem(TOKEN_KEY) : "";
     load(stored || "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isLoaded, load]);
 
   const handleApplyToken = () => {
     if (typeof window !== "undefined") {
@@ -116,7 +118,7 @@ export default function AdminPage() {
     setSaving(true);
     setSaveMsg(null);
     try {
-      const updated = await updateOpsConfig(config, adminToken || null);
+      const updated = await updateOpsConfig(config, adminToken || null, await getToken());
       setConfig(updated);
       setSaveMsg({ ok: true, text: "已保存 / Saved" });
     } catch (e) {

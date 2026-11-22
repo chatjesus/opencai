@@ -1,0 +1,14 @@
+.env
+.env.*
+.git
+__pycache__
+**/__pycache__
+.pytest_cache
+venv
+.venv
+*.db
+*.db-*
+*.sqlite*
+platform_config.json
+uploads/generated
+uploads/voice

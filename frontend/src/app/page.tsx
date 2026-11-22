@@ -5,6 +5,7 @@ import Link from "next/link";
 import CharacterCard from "@/components/CharacterCard";
 import { fetchCharacters, fetchCategories, type CharacterCard as CharacterCardType } from "@/lib/api";
 import { useT, useI18n } from "@/contexts/I18nContext";
+import { InlineSignInCTA, useAppAuth } from "@/contexts/AuthContext";
 
 const categoryIcons: Record<string, string> = {
   Featured: "\uD83D\uDD25", Romance: "\uD83D\uDC8B", Anime: "\uD83C\uDF38", Fantasy: "\u2694\uFE0F",
@@ -15,6 +16,7 @@ const categoryIcons: Record<string, string> = {
 export default function HomePage() {
   const t = useT();
   const { locale } = useI18n();
+  const { getToken, isLoaded, isSignedIn, telegramAuthError } = useAppAuth();
   const [characters, setCharacters] = useState<CharacterCardType[]>([]);
   const [categories, setCategories] = useState<string[]>(["Featured"]);
   const [activeCategory, setActiveCategory] = useState("Featured");
@@ -22,9 +24,12 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => { fetchCategories().then(setCategories).catch(() => {}); }, []);
+  useEffect(() => {
+    if (isLoaded) getToken().then(fetchCategories).then(setCategories).catch(() => {});
+  }, [getToken, isLoaded]);
 
   useEffect(() => {
+    if (!isLoaded) return;
     let cancelled = false;
     // Run the fetch in an async flow so state updates happen in callbacks,
     // not synchronously in the effect body (avoids cascading renders).
@@ -32,14 +37,14 @@ export default function HomePage() {
       setLoading(true);
       setError(null);
       try {
-        const data = await fetchCharacters(activeCategory, searchQuery, locale);
+        const data = await fetchCharacters(activeCategory, searchQuery, locale, await getToken());
         if (!cancelled) { setCharacters(data); setLoading(false); }
       } catch (err) {
         if (!cancelled) { setError((err as Error).message); setLoading(false); }
       }
     })();
     return () => { cancelled = true; };
-  }, [activeCategory, searchQuery, locale]);
+  }, [activeCategory, searchQuery, locale, getToken, isLoaded]);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -96,8 +101,8 @@ export default function HomePage() {
       <div className="px-6 pb-8 pt-4">
         {error && (
           <div className="text-center py-12">
-            <p className="text-red-400 text-lg mb-2">{t.home.connectionError}</p>
-            <p style={{ color: "var(--muted)" }} className="text-sm">{t.home.backendOffline}</p>
+            <p className="text-red-400 text-sm mb-4" role="alert">{telegramAuthError || error}</p>
+            {error === "Authentication required" && !isSignedIn && !telegramAuthError && <InlineSignInCTA />}
           </div>
         )}
         {loading && !error && (

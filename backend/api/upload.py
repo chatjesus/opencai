@@ -12,7 +12,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["upload"])
 
 UPLOAD_DIR   = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "avatars")
-ALLOWED_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+IMAGE_EXTENSIONS = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+}
 MAX_SIZE      = 10 * 1024 * 1024  # 10 MB
 
 # ── R2 configuration (optional) ───────────────────────────────────────────────
@@ -50,7 +55,7 @@ def _get_r2():
 @router.post("/upload/avatar")
 async def upload_avatar(file: UploadFile = File(...)):
     """Upload an avatar image. Returns the public URL."""
-    if file.content_type not in ALLOWED_TYPES:
+    if file.content_type not in IMAGE_EXTENSIONS:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid file type: {file.content_type}. Allowed: jpg, png, gif, webp",
@@ -60,7 +65,7 @@ async def upload_avatar(file: UploadFile = File(...)):
     if len(contents) > MAX_SIZE:
         raise HTTPException(status_code=400, detail="File too large. Max size: 10MB")
 
-    ext      = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "png"
+    ext = IMAGE_EXTENSIONS[file.content_type]
     filename = f"{uuid.uuid4().hex}.{ext}"
 
     r2 = _get_r2()

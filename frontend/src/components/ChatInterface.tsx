@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
-import { useAuth, SignInButton } from "@clerk/nextjs";
+import { InlineSignInCTA, useAppAuth } from "@/contexts/AuthContext";
 import {
   sendMessageStream,
   fetchConversation,
@@ -10,6 +10,8 @@ import {
   createConversation,
   fetchCharacter,
   checkinConversation,
+  illustrateConversation,
+  updateConversationContext,
   drawSurprise,
   resolveImageUrl,
   type ChatMessage,
@@ -31,6 +33,7 @@ const MemoryPanel = dynamic(() => import("@/components/MemoryPanel"), { ssr: fal
 
 interface Props {
   characterId: number;
+  selectedId?: number;
 }
 
 function getAvatarGradient(name: string): string {
@@ -155,10 +158,61 @@ interface SurpriseReveal {
   intimacy_bonus: number;
 }
 
-export default function ChatInterface({ characterId }: Props) {
+function StoryImage({ image, onOpen }: { image: ChatImage; onOpen: (src: string) => void }) {
+  const { getToken } = useAppAuth();
+  const [loadedUrl, setLoadedUrl] = useState<string>();
+  const [failed, setFailed] = useState(false);
+  const protectedImage = /^\/uploads\/generated\/[a-zA-Z0-9._-]+$/.test(image.url);
+  const imageUrl = resolveImageUrl(image.url);
+
+  useEffect(() => {
+    if (!protectedImage) return;
+    const controller = new AbortController();
+    let objectUrl: string | undefined;
+    async function load() {
+      const token = await getToken();
+      const response = await fetch(imageUrl, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        redirect: "error",
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.headers.get("content-type")?.startsWith("image/")) {
+        throw new Error("Image unavailable");
+      }
+      const blob = await response.blob();
+      if (controller.signal.aborted) return;
+      objectUrl = URL.createObjectURL(blob);
+      setLoadedUrl(objectUrl);
+    }
+    load().catch(() => {
+      if (!controller.signal.aborted) setFailed(true);
+    });
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [getToken, imageUrl, protectedImage]);
+
+  const src = protectedImage ? loadedUrl : imageUrl;
+  if (!src) return <span role="status" className="text-xs text-neutral-400">{failed ? "图片暂不可用" : "正在载入插画…"}</span>;
+  return (
+    <button type="button" onClick={() => onOpen(src)} className="block rounded-xl overflow-hidden hover:opacity-90 cursor-zoom-in">
+      <img src={src} alt={image.alt} className="max-w-full w-70 max-h-100 rounded-xl object-contain" loading="lazy" />
+    </button>
+  );
+}
+
+export default function ChatInterface({ characterId, selectedId }: Props) {
   const t = useT();
   const { locale } = useI18n();
-  const { getToken, isSignedIn } = useAuth();
+  const { getToken, isSignedIn, isLoaded, telegramAuthError } = useAppAuth();
+  const chinese = locale.startsWith("zh");
+  const [sceneOpen, setSceneOpen] = useState(false);
+  const [scenarioNote, setScenarioNote] = useState("");
+  const [sceneDraft, setSceneDraft] = useState("");
+  const [currentMood, setCurrentMood] = useState<string | null>(null);
+  const [savingScene, setSavingScene] = useState(false);
+  const [illustrating, setIllustrating] = useState(false);
   const [memoryBannerDismissed, setMemoryBannerDismissed] = useState(false);
   const [showMemory, setShowMemory] = useState(false);
   const [character, setCharacter] = useState<Character | null>(null);
@@ -186,11 +240,12 @@ export default function ChatInterface({ characterId }: Props) {
   const lastAiMsgIdRef = useRef<number | undefined>(undefined);
   const checkedInRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const shouldFollowRef = useRef(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const streamingTextRef = useRef("");
 
   const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (shouldFollowRef.current) messagesEndRef.current?.scrollIntoView({ block: "end" });
   }, []);
 
   useEffect(() => {
@@ -198,52 +253,35 @@ export default function ChatInterface({ characterId }: Props) {
   }, [messages, streamingText, scrollToBottom]);
 
   useEffect(() => {
-    // Clear all state immediately when character changes
-    setCharacter(null);
-    setMessages([]);
-    setConversationId(null);
-    setStreamingText("");
-    setError(null);
-    setGeneratingImage(false);
-    setStreamingImages([]);
-    setIntimacyLevel(0);
-    setIntimacyToast(null);
-    setSurpriseReveal(null);
-    setSurpriseUnavailable(false);
-    setDrawingSurprise(false);
-    setStreakDays(0);
-    setStreakToast(null);
-    setToolExecuting(null);
-    setToolResult(null);
-    streamingTextRef.current = "";
+    if (!isLoaded || telegramAuthError) return;
+    let cancelled = false;
 
     async function init() {
       try {
-        const char = await fetchCharacter(characterId, locale);
+        const token = await getToken();
+        if (cancelled) return;
+        const char = await fetchCharacter(characterId, locale, token);
+        if (cancelled) return;
+        setError(null);
         setCharacter(char);
 
-        // Get-or-create: reuse existing conversation for this character
-        const token = await getToken();
-        const existing = await fetchConversations(characterId, token);
-
-        let convId: number;
-        if (existing.length > 0) {
-          // Reuse the most recent conversation. The API returns them ordered
-          // by updated_at DESC, so the most recent is existing[0] (NOT [-1],
-          // which is the oldest and may be a stale/other-user conversation).
-          convId = existing[0].id;
-        } else {
-          const conv = await createConversation(characterId, token);
-          convId = conv.id;
+        let convId = selectedId;
+        if (convId === undefined) {
+          const existing = await fetchConversations(characterId, token);
+          if (cancelled) return;
+          convId = existing[0]?.id ?? (await createConversation(characterId, token)).id;
         }
+        const detail = await fetchConversation(convId, token);
+        if (cancelled) return;
+        if (detail.character_id !== characterId) throw new Error(t.chat.initFailed);
         setConversationId(convId);
         // Notify Sidebar to refresh its chat list now that the conversation exists
         window.dispatchEvent(new CustomEvent("conversation-ready", { detail: { characterId } }));
 
-        const detail = await fetchConversation(convId, token);
-        if (detail.messages.length > 0) {
-          setMessages(detail.messages);
-        }
+        setMessages(detail.messages);
+        setScenarioNote(detail.scenario_note ?? "");
+        setSceneDraft(detail.scenario_note ?? "");
+        setCurrentMood(detail.current_mood ?? null);
         setIntimacyLevel(detail.intimacy_level ?? 0);
         setStreakDays(detail.streak_days ?? 0);
 
@@ -253,6 +291,7 @@ export default function ChatInterface({ characterId }: Props) {
         if (detail.messages.length > 0 && checkedInRef.current !== convId) {
           checkedInRef.current = convId;
           const ci = await checkinConversation(convId, token);
+          if (cancelled) return;
           if (ci?.greeting) {
             setMessages((prev) => [
               ...prev,
@@ -272,17 +311,53 @@ export default function ChatInterface({ characterId }: Props) {
           }
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : t.chat.initFailed);
+        if (!cancelled) setError(err instanceof Error ? err.message : t.chat.initFailed);
       }
     }
     init();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [characterId, locale]);
+    return () => { cancelled = true; };
+  }, [characterId, selectedId, locale, isLoaded, getToken, telegramAuthError, t.chat.initFailed]);
+
+  const handleSaveScene = async () => {
+    if (!conversationId || savingScene) return;
+    setSavingScene(true);
+    setError(null);
+    try {
+      const result = await updateConversationContext(conversationId, sceneDraft, await getToken());
+      setScenarioNote(result.scenario_note);
+      setSceneDraft(result.scenario_note);
+      setCurrentMood(result.current_mood);
+      setSceneOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "保存失败");
+    } finally {
+      setSavingScene(false);
+    }
+  };
+
+  const handleIllustrate = async () => {
+    if (!conversationId || !isSignedIn || isStreaming || illustrating) return;
+    setIllustrating(true);
+    setError(null);
+    try {
+      const token = await getToken();
+      await illustrateConversation(conversationId, token);
+      const detail = await fetchConversation(conversationId, token);
+      shouldFollowRef.current = true;
+      setMessages(detail.messages);
+      setCurrentMood(detail.current_mood ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "插画生成失败");
+    } finally {
+      setIllustrating(false);
+    }
+  };
 
   const handleSend = async () => {
-    if (!input.trim() || isStreaming || !conversationId) return;
+    if (!input.trim() || isStreaming || illustrating || !conversationId) return;
 
     const userMessage = input.trim();
+    shouldFollowRef.current = true;
     setInput("");
     setError(null);
 
@@ -300,7 +375,7 @@ export default function ChatInterface({ characterId }: Props) {
     streamingTextRef.current = "";
 
     const collectedImages: ChatImage[] = [];
-    const token = await getToken();
+    const token = await getToken().catch(() => null);
     await sendMessageStream(
       conversationId,
       userMessage,
@@ -403,7 +478,7 @@ export default function ChatInterface({ characterId }: Props) {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
       e.preventDefault();
       handleSend();
     }
@@ -444,20 +519,21 @@ export default function ChatInterface({ characterId }: Props) {
   };
 
   // ── Loading states ──
-  if (error && !character) {
+  if ((error || telegramAuthError) && !character) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center p-8">
           <p className="text-red-400 text-lg mb-2">{t.chat.connectionError}</p>
           <p className="text-sm" style={{ color: "var(--muted)" }}>
-            {error}. Make sure the backend is running.
+            {telegramAuthError || error}
           </p>
+          <InlineSignInCTA />
         </div>
       </div>
     );
   }
 
-  if (!character) {
+  if (!isLoaded || !character) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="flex items-center gap-3">
@@ -611,17 +687,17 @@ export default function ChatInterface({ characterId }: Props) {
 
       {/* ── Character Header (ClawFans style: centered avatar + name) ── */}
       <div
-        className="flex flex-col items-center pt-6 pb-4 border-b flex-shrink-0"
+        className="flex flex-col items-center py-2 sm:pt-6 sm:pb-4 border-b flex-shrink-0"
         style={{ borderColor: "var(--card-border)" }}
       >
         {character.avatar_url ? (
           <img
             src={character.avatar_url}
             alt={character.name}
-            className="w-20 h-20 rounded-full object-cover object-top mb-2 ring-2 ring-rose-500/30"
+            className="w-9 h-9 sm:w-20 sm:h-20 rounded-full object-cover object-top mb-1 sm:mb-2 ring-2 ring-rose-500/30"
           />
         ) : (
-          <div className={`w-20 h-20 rounded-full bg-gradient-to-br ${getAvatarGradient(character.name)} flex items-center justify-center text-white text-2xl font-bold mb-2`}>
+          <div className={`w-9 h-9 sm:w-20 sm:h-20 rounded-full bg-gradient-to-br ${getAvatarGradient(character.name)} flex items-center justify-center text-white text-lg sm:text-2xl font-bold mb-1 sm:mb-2`}>
             {character.name.charAt(0)}
           </div>
         )}
@@ -719,12 +795,7 @@ export default function ChatInterface({ characterId }: Props) {
           <span style={{ color: "var(--muted)" }}>
             登录后自动保存记忆，跨设备同步对话记录。
           </span>
-          <SignInButton mode="modal">
-            <button className="ml-auto shrink-0 px-3 py-1 rounded-lg text-xs font-semibold transition-colors"
-              style={{ background: "var(--accent)", color: "#fff" }}>
-              登录
-            </button>
-          </SignInButton>
+          <InlineSignInCTA />
           <button onClick={() => setMemoryBannerDismissed(true)}
             className="shrink-0 opacity-40 hover:opacity-80 transition-opacity text-base leading-none"
             style={{ color: "var(--muted)" }}>
@@ -734,7 +805,10 @@ export default function ChatInterface({ characterId }: Props) {
       )}
 
       {/* ── Messages ── */}
-      <div className="flex-1 overflow-y-auto px-4 py-5">
+      <div className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-4 py-5" onScroll={(event) => {
+        const { scrollHeight, scrollTop, clientHeight } = event.currentTarget;
+        shouldFollowRef.current = scrollHeight - scrollTop - clientHeight < 120;
+      }}>
         <div className="max-w-2xl mx-auto space-y-4">
 
           {/* Greeting block */}
@@ -742,7 +816,7 @@ export default function ChatInterface({ characterId }: Props) {
             <div className="flex gap-3 items-start">
               <SmallAvatar />
               <div
-                className="flex-1 rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed"
+                className="flex-1 min-w-0 narrative-turn narrative-prose px-4 py-3"
                 style={{ background: "var(--card-bg)", border: "1px solid var(--card-border)" }}
               >
                 <AudioPlayer text={character.greeting} charId={character.id} />
@@ -768,7 +842,7 @@ export default function ChatInterface({ characterId }: Props) {
                   className={`text-sm leading-relaxed ${
                     msg.role === "user"
                       ? "rounded-2xl rounded-tr-sm max-w-[75%] text-white px-4 py-3"
-                      : "flex-1 rounded-2xl rounded-tl-sm px-4 py-3"
+                      : "flex-1 min-w-0 narrative-turn narrative-prose px-4 py-3"
                   }`}
                   style={
                     msg.role === "user"
@@ -792,20 +866,7 @@ export default function ChatInterface({ characterId }: Props) {
                   {/* Inline images */}
                   {msgImages.length > 0 && (
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {msgImages.map((img, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => setLightboxUrl(resolveImageUrl(img.url))}
-                          className="block rounded-xl overflow-hidden hover:opacity-90 transition-opacity cursor-zoom-in"
-                        >
-                          <img
-                            src={resolveImageUrl(img.url)}
-                            alt={img.alt}
-                            className="max-w-[280px] max-h-[400px] rounded-xl object-cover"
-                            loading="lazy"
-                          />
-                        </button>
-                      ))}
+                      {msgImages.map((img, index) => <StoryImage key={`${img.url}:${index}`} image={img} onOpen={setLightboxUrl} />)}
                     </div>
                   )}
                 </div>
@@ -818,7 +879,7 @@ export default function ChatInterface({ characterId }: Props) {
             <div className="flex gap-3 items-start">
               <SmallAvatar />
               <div
-                className="flex-1 rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed"
+                className="flex-1 min-w-0 narrative-turn narrative-prose px-4 py-3"
                 style={{ background: "var(--card-bg)", border: "1px solid var(--card-border)" }}
               >
                 {streamingText ? renderRoleplayText(stripImgTags(streamingText)) : (
@@ -863,20 +924,7 @@ export default function ChatInterface({ characterId }: Props) {
                 {/* Streamed images (arrived during this turn) */}
                 {streamingImages.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {streamingImages.map((img, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => setLightboxUrl(resolveImageUrl(img.url))}
-                        className="block rounded-xl overflow-hidden hover:opacity-90 transition-opacity cursor-zoom-in"
-                      >
-                        <img
-                          src={resolveImageUrl(img.url)}
-                          alt={img.alt}
-                          className="max-w-[280px] max-h-[400px] rounded-xl object-cover"
-                          loading="lazy"
-                        />
-                      </button>
-                    ))}
+                    {streamingImages.map((img, index) => <StoryImage key={`${img.url}:${index}`} image={img} onOpen={setLightboxUrl} />)}
                   </div>
                 )}
               </div>
@@ -885,7 +933,7 @@ export default function ChatInterface({ characterId }: Props) {
 
           {/* Error */}
           {error && (
-            <div className="rounded-xl px-4 py-3 text-sm" style={{ background: "rgba(239,68,68,0.1)", color: "#f87171" }}>
+            <div role="alert" className="rounded-xl px-4 py-3 text-sm" style={{ background: "rgba(239,68,68,0.1)", color: "#f87171" }}>
               {error}
             </div>
           )}
@@ -950,10 +998,39 @@ export default function ChatInterface({ characterId }: Props) {
 
       {/* ── Input (ClawFans style: pill shape, up-arrow send) ── */}
       <div
-        className="px-4 py-4 border-t flex-shrink-0"
+        className="px-3 sm:px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t flex-shrink-0"
         style={{ borderColor: "var(--card-border)" }}
       >
         <div className="max-w-2xl mx-auto">
+          <div className="flex flex-wrap items-center gap-2 mb-2 text-xs">
+            <button type="button" onClick={() => setSceneOpen(!sceneOpen)} aria-expanded={sceneOpen}
+              disabled={!isSignedIn || !conversationId}
+              className="rounded-lg border border-white/15 px-3 py-2 hover:bg-white/10 disabled:opacity-40">
+              {chinese ? "剧情设定" : "Story settings"}
+            </button>
+            <button type="button" onClick={handleIllustrate}
+              disabled={!isSignedIn || !conversationId || !messages.some((message) => message.role === "assistant") || isStreaming || illustrating}
+              className="rounded-lg border border-rose-400/30 px-3 py-2 text-rose-300 hover:bg-rose-400/10 disabled:opacity-40">
+              {illustrating ? (chinese ? "生成插画中…" : "Generating…") : (chinese ? "剧情生图" : "Illustrate scene")}
+            </button>
+            {illustrating && <span role="status">{chinese ? "正在绘制当前场景" : "Drawing the current scene"}</span>}
+            {currentMood && <span className="min-w-0 truncate" style={{ color: "var(--muted)" }}>{currentMood}</span>}
+          </div>
+          {sceneOpen && (
+            <div className="mb-2 narrative-scene-card p-3 space-y-2">
+              <label htmlFor="scenario-note" className="block text-xs">
+                {chinese ? "加入角色关系、地点或世界设定。后续对话会读取这里的内容。" : "Add relationships, locations, or world details for future turns."}
+              </label>
+              <textarea id="scenario-note" value={sceneDraft} maxLength={4000} rows={3}
+                onChange={(event) => setSceneDraft(event.target.value)}
+                className="w-full max-h-28 rounded-lg resize-y bg-black/20 px-3 py-2 text-sm" />
+              <button type="button" onClick={handleSaveScene}
+                disabled={savingScene || isStreaming || illustrating || sceneDraft === scenarioNote}
+                className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs text-white disabled:opacity-40">
+                {savingScene ? (chinese ? "保存中…" : "Saving…") : (chinese ? "保存设定" : "Save settings")}
+              </button>
+            </div>
+          )}
           <div
             className="flex items-end gap-2 rounded-2xl border px-4 py-2"
             style={{ background: "var(--card-bg)", borderColor: "var(--card-border)" }}
@@ -965,7 +1042,7 @@ export default function ChatInterface({ characterId }: Props) {
               onKeyDown={handleKeyDown}
               placeholder={t.chat.messagePlaceholder}
               rows={1}
-              disabled={isStreaming}
+              disabled={isStreaming || illustrating || !conversationId}
               className="flex-1 resize-none bg-transparent text-sm focus:outline-none disabled:opacity-50 py-1"
               style={{ color: "var(--foreground)" }}
               onInput={(e) => {
@@ -977,7 +1054,8 @@ export default function ChatInterface({ characterId }: Props) {
             {/* Send button — up arrow (ClawFans style) */}
             <button
               onClick={handleSend}
-              disabled={!input.trim() || isStreaming}
+              disabled={!input.trim() || isStreaming || illustrating || !conversationId}
+              aria-label={chinese ? "发送" : "Send"}
               className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-all disabled:opacity-30"
               style={{
                 background: input.trim() && !isStreaming

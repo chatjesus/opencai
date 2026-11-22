@@ -12,6 +12,7 @@ from models.schemas import (
     CharacterCreate, CharacterUpdate, CharacterResponse, CharacterCard
 )
 from auth.clerk import get_current_user_id, require_auth
+from auth.private_beta import private_beta_enabled
 from services.character_card import card_to_character_fields
 
 router = APIRouter(prefix="/api/characters", tags=["characters"])
@@ -57,6 +58,11 @@ def _require_owner(char: Character, user_id: str) -> None:
         raise HTTPException(status_code=403, detail="Not the character's creator")
 
 
+def require_character_visible(char: Character, user_id: str) -> None:
+    if not char.is_public and char.clerk_creator_id != user_id:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+
 def _apply_locale(char: Character, locale: Optional[str]) -> Character:
     """
     Overlay translated fields with fallback chain:
@@ -95,7 +101,8 @@ def _apply_locale_card(char: Character, locale: Optional[str]) -> Character:
 
 # ── Character CRUD ────────────────────────────────────────────────────────────
 
-@router.post("/", response_model=CharacterResponse, status_code=201)
+@router.post("/", response_model=CharacterResponse, status_code=201, include_in_schema=False)
+@router.post("", response_model=CharacterResponse, status_code=201)
 async def create_character(
     data: CharacterCreate,
     request: Request,
@@ -110,6 +117,7 @@ async def create_character(
         description=data.description,
         system_prompt=data.system_prompt,
         greeting=data.greeting,
+        backstory=data.backstory or "",
         avatar_url=data.avatar_url,
         tags=data.tags,
         category=data.category,
@@ -119,7 +127,9 @@ async def create_character(
     db.add(char)
     db.commit()
     db.refresh(char)
-    return char
+    resp = CharacterResponse.model_validate(char)
+    resp.can_edit = True
+    return resp
 
 
 @router.post("/import", response_model=CharacterResponse, status_code=201)
@@ -131,7 +141,7 @@ async def import_character(
 
     Accepts both the v2 wrapper shape ({"spec": ..., "data": {...}}) and the
     flat shape. Requires auth — the caller becomes the creator. The imported
-    character is public and filed under the "Imported" category.
+    character is filed under the "Imported" category.
     """
     user_id = await get_current_user_id(request)
     require_auth(user_id)
@@ -153,18 +163,22 @@ async def import_character(
         description=fields["description"],
         system_prompt=fields["system_prompt"],
         greeting=fields["greeting"],
-        is_public=True,
+        is_public=not private_beta_enabled(),
         category="Imported",
         clerk_creator_id=user_id,
     )
     db.add(char)
     db.commit()
     db.refresh(char)
-    return char
+    resp = CharacterResponse.model_validate(char)
+    resp.can_edit = True
+    return resp
 
 
-@router.get("/", response_model=list[CharacterCard])
-def list_characters(
+@router.get("/", response_model=list[CharacterCard], include_in_schema=False)
+@router.get("", response_model=list[CharacterCard])
+async def list_characters(
+    request: Request,
     category: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     locale: Optional[str] = Query(None),
@@ -173,7 +187,11 @@ def list_characters(
     db: Session = Depends(get_db),
 ):
     """List characters with optional category filter, search, and locale overlay."""
-    query = db.query(Character).filter(Character.is_public == True)
+    user_id = await get_current_user_id(request)
+    visible = Character.is_public.is_(True)
+    if user_id != "anonymous":
+        visible = visible | (Character.clerk_creator_id == user_id)
+    query = db.query(Character).filter(visible)
 
     # Eager-load translations so the per-row _apply_locale_card overlay below
     # doesn't trigger a separate SELECT per character (N+1).
@@ -215,8 +233,9 @@ def list_categories(db: Session = Depends(get_db)):
 
 
 @router.get("/{character_id}", response_model=CharacterResponse)
-def get_character(
+async def get_character(
     character_id: int,
+    request: Request,
     locale: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
@@ -224,7 +243,16 @@ def get_character(
     char = db.query(Character).filter(Character.id == character_id).first()
     if not char:
         raise HTTPException(status_code=404, detail="Character not found")
-    return _apply_locale(char, locale)
+    user_id = await get_current_user_id(request)
+    require_character_visible(char, user_id)
+    localized = _apply_locale(char, locale)
+    resp = CharacterResponse.model_validate(localized)
+    resp.can_edit = bool(
+        char.clerk_creator_id
+        and user_id != "anonymous"
+        and char.clerk_creator_id == user_id
+    )
+    return resp
 
 
 @router.put("/{character_id}", response_model=CharacterResponse)
@@ -250,7 +278,9 @@ async def update_character(
 
     db.commit()
     db.refresh(char)
-    return char
+    resp = CharacterResponse.model_validate(char)
+    resp.can_edit = True
+    return resp
 
 
 @router.delete("/{character_id}", status_code=204)
@@ -294,11 +324,12 @@ class TranslationResponse(BaseModel):
 
 
 @router.get("/{character_id}/translations", response_model=list[TranslationResponse])
-def list_translations(character_id: int, db: Session = Depends(get_db)):
+async def list_translations(character_id: int, request: Request, db: Session = Depends(get_db)):
     """List all available translations for a character."""
     char = db.query(Character).filter(Character.id == character_id).first()
     if not char:
         raise HTTPException(status_code=404, detail="Character not found")
+    require_character_visible(char, await get_current_user_id(request))
     return db.query(CharacterTranslation).filter(
         CharacterTranslation.character_id == character_id
     ).all()
@@ -351,7 +382,7 @@ async def upsert_translation(
 
 
 @router.get("/{character_id}/translations/{locale}", response_model=TranslationResponse)
-def get_translation(character_id: int, locale: str, db: Session = Depends(get_db)):
+async def get_translation(character_id: int, locale: str, request: Request, db: Session = Depends(get_db)):
     """Get a single translation."""
     tr = db.query(CharacterTranslation).filter(
         CharacterTranslation.character_id == character_id,
@@ -359,4 +390,5 @@ def get_translation(character_id: int, locale: str, db: Session = Depends(get_db
     ).first()
     if not tr:
         raise HTTPException(status_code=404, detail="Translation not found")
+    require_character_visible(tr.character, await get_current_user_id(request))
     return tr

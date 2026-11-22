@@ -14,7 +14,7 @@ from services.llm_service import chat_completion_stream
 from services.image_service import (
     extract_image_tags, extract_scene_tags, strip_image_tags,
     replace_image_tags, replace_scene_tags, generate_image,
-    get_pregenerated_scenes,
+    get_pregenerated_scenes, should_auto_generate_reply_images,
 )
 from services.scene_service import build_scene_availability_prompt
 from services.intimacy_service import (
@@ -246,6 +246,18 @@ def build_messages(
     system_content = replace_macros(SYSTEM_PROMPT, char_name)
     system_content += f"## Character Card: {char_name}\n"
     system_content += replace_macros(base_prompt, char_name)
+
+    backstory = getattr(character, "backstory", None)
+    if backstory and backstory.strip():
+        system_content += f"\n\n## Backstory & Lore\n{replace_macros(backstory.strip(), char_name)}"
+
+    scenario_note = getattr(conversation, "scenario_note", None)
+    if scenario_note and scenario_note.strip():
+        system_content += (
+            f"\n\n## Active Story & Scenario Context (Persisted)\n"
+            f"{replace_macros(scenario_note.strip(), char_name)}\n"
+            f"Keep all facts, setting details, and relationship context above consistent across turns."
+        )
 
     # Inject intimacy context (relationship stage + photo rules).
     # Slow-burn: TEXT explicitness is intimacy-gated (parallel to the image gate
@@ -588,7 +600,11 @@ async def process_reply_images(
     from services.ops_config import get_ops_value, is_image_explicit_allowed
 
     tag_to_url: dict[str, str] = {}
-    img_tags = extract_image_tags(full_reply) if get_ops_value(db, "nsfw_images_enabled", True) else []
+    auto_gen_allowed = (
+        should_auto_generate_reply_images()
+        and bool(get_ops_value(db, "nsfw_images_enabled", True))
+    )
+    img_tags = extract_image_tags(full_reply) if auto_gen_allowed else []
 
     # Same gate logic as text, honoring per-character override → images unlock in
     # step with explicit text (no SFW-photo / explicit-text split for start-hot).

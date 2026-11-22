@@ -2,13 +2,15 @@
 Voice API — text-to-speech for character messages.
 """
 import base64
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from models.database import get_db, Character, Message
 from services.voice_service import synthesize_speech, synthesize_speech_streaming
+from auth.clerk import get_current_user_id
+from auth.private_beta import private_beta_enabled
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
 
@@ -51,7 +53,7 @@ async def synthesize(req: TTSRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/message/{message_id}")
-async def message_tts(message_id: int, db: Session = Depends(get_db)):
+async def message_tts(message_id: int, request: Request, db: Session = Depends(get_db)):
     """Generate TTS audio for an existing message, return MP3 directly."""
     msg = db.query(Message).filter(Message.id == message_id).first()
     if not msg:
@@ -61,6 +63,8 @@ async def message_tts(message_id: int, db: Session = Depends(get_db)):
     conv = db.query(Conversation).filter(Conversation.id == msg.conversation_id).first()
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    if private_beta_enabled() and conv.clerk_user_id != await get_current_user_id(request):
+        raise HTTPException(status_code=404, detail="Message not found")
 
     char = db.query(Character).filter(Character.id == conv.character_id).first()
     if not char:

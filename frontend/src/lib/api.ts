@@ -1,17 +1,29 @@
 /**
- * API client for the ClawFans backend.
+ * API client for the opencai backend.
  */
 
-// Use env var if set; fallback to "" (relative URL) so nginx can proxy correctly in production
+// Use env var if set; fallback to "" (relative URL) so Next.js / nginx can proxy same-origin
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL !== undefined && process.env.NEXT_PUBLIC_API_URL !== "undefined")
   ? process.env.NEXT_PUBLIC_API_URL
   : "";
 
-/** Build auth headers. Pass the Clerk token when available. */
-export function authHeaders(token?: string | null): HeadersInit {
-  const h: HeadersInit = { "Content-Type": "application/json" };
+/** Build auth headers. Pass the Clerk or Telegram Mini App session token when available. */
+export function authHeaders(token?: string | null): Record<string, string> {
+  const h: Record<string, string> = { "Content-Type": "application/json" };
   if (token) h["Authorization"] = `Bearer ${token}`;
   return h;
+}
+
+async function readErrorDetail(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = await res.json();
+    if (body && typeof body.detail === "string" && body.detail.trim()) {
+      return body.detail;
+    }
+  } catch {
+    // ignore non-JSON body
+  }
+  return fallback;
 }
 
 // ── Types ──
@@ -33,6 +45,7 @@ export interface Character {
   description: string;
   system_prompt: string;
   greeting: string;
+  backstory?: string;
   avatar_url: string;
   tags: string;
   category: string;
@@ -40,6 +53,7 @@ export interface Character {
   message_count: number;
   star_count: number;
   creator_id: number | null;
+  can_edit?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -49,10 +63,23 @@ export interface CharacterCreate {
   description: string;
   system_prompt: string;
   greeting: string;
+  backstory?: string;
   avatar_url: string;
   tags: string;
   category: string;
   is_public: boolean;
+}
+
+export interface CharacterUpdate {
+  name?: string;
+  description?: string;
+  system_prompt?: string;
+  greeting?: string;
+  backstory?: string;
+  avatar_url?: string;
+  tags?: string;
+  category?: string;
+  is_public?: boolean;
 }
 
 export interface Conversation {
@@ -61,6 +88,8 @@ export interface Conversation {
   title: string;
   character_name: string;
   character_avatar: string;
+  intimacy_level?: number;
+  streak_days?: number;
   created_at: string;
   updated_at: string;
 }
@@ -75,6 +104,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   images?: ChatImage[];
+  is_proactive?: boolean;
   created_at: string;
 }
 
@@ -87,6 +117,8 @@ export interface ConversationDetail {
   messages: ChatMessage[];
   intimacy_level: number;
   streak_days: number;
+  current_mood?: string | null;
+  scenario_note?: string;
   created_at: string;
   updated_at: string;
 }
@@ -95,6 +127,16 @@ export interface HealthStatus {
   status: string;
   ollama: string;
   models: string[];
+  llm_provider?: string;
+  llm_status?: string;
+  llm_healthy?: boolean;
+  llm_detail?: string | null;
+  image_provider?: string;
+  image_status?: string;
+  image_healthy?: boolean;
+  image_model?: string | null;
+  image_detail?: string | null;
+  telegram_webapp_enabled?: boolean;
 }
 
 export interface Memory {
@@ -103,6 +145,21 @@ export interface Memory {
   value: string;
   confidence: number;
   created_at: string;
+}
+
+export interface TelegramWebAppSession {
+  access_token: string;
+  token_type: string;
+  user_id: string;
+  telegram_user_id: string;
+  linked: boolean;
+  expires_in: number;
+}
+
+export interface IllustrateResponse {
+  image: ChatImage;
+  message_id: number;
+  provider: string;
 }
 
 /** Operator-tunable config for running the adult companion product. */
@@ -123,25 +180,71 @@ export async function fetchHealth(): Promise<HealthStatus> {
   return res.json();
 }
 
+export async function authenticateTelegramWebApp(initData: string): Promise<TelegramWebAppSession> {
+  const res = await fetch(`${API_BASE}/api/auth/telegram/webapp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ init_data: initData }),
+  });
+  if (!res.ok) {
+    throw new Error(await readErrorDetail(res, "Telegram Mini App authentication failed"));
+  }
+  return res.json();
+}
+
+export async function generateTelegramBindCode(
+  token?: string | null,
+): Promise<{ code: string; expires_in: number }> {
+  const res = await fetch(`${API_BASE}/api/auth/bind/code`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+  if (res.status === 401) throw new Error("Please sign in on Web to generate a bind code");
+  if (!res.ok) throw new Error(await readErrorDetail(res, "Failed to generate bind code"));
+  return res.json();
+}
+
+export async function redeemTelegramBindCode(
+  code: string,
+  token: string,
+): Promise<TelegramWebAppSession> {
+  const res = await fetch(`${API_BASE}/api/auth/telegram/bind`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ code }),
+  });
+  if (!res.ok) {
+    throw new Error(await readErrorDetail(res, "Failed to redeem bind code"));
+  }
+  return res.json();
+}
+
 export async function fetchCharacters(
   category?: string,
   search?: string,
   locale?: string,
+  token?: string | null,
 ): Promise<CharacterCard[]> {
   const params = new URLSearchParams();
   if (category && category !== "Featured") params.set("category", category);
   if (search) params.set("search", search);
   if (locale && locale !== "zh") params.set("locale", locale);
   params.set("limit", "300");
-  const res = await fetch(`${API_BASE}/api/characters?${params}`);
-  if (!res.ok) throw new Error("Failed to fetch characters");
+  const res = await fetch(`${API_BASE}/api/characters?${params}`, { headers: authHeaders(token) });
+  if (!res.ok) throw new Error(await readErrorDetail(res, "Failed to fetch characters"));
   return res.json();
 }
 
-export async function fetchCharacter(id: number, locale?: string): Promise<Character> {
+export async function fetchCharacter(
+  id: number,
+  locale?: string,
+  token?: string | null,
+): Promise<Character> {
   const params = new URLSearchParams();
   if (locale && locale !== "zh") params.set("locale", locale);
-  const res = await fetch(`${API_BASE}/api/characters/${id}?${params}`);
+  const res = await fetch(`${API_BASE}/api/characters/${id}?${params}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
   if (!res.ok) throw new Error("Character not found");
   return res.json();
 }
@@ -156,12 +259,28 @@ export async function createCharacter(
     body: JSON.stringify(data),
   });
   if (res.status === 401) throw new Error("Please sign in to create a character");
-  if (!res.ok) throw new Error("Failed to create character");
+  if (!res.ok) throw new Error(await readErrorDetail(res, "Failed to create character"));
   return res.json();
 }
 
-export async function fetchCategories(): Promise<string[]> {
-  const res = await fetch(`${API_BASE}/api/characters/categories`);
+export async function updateCharacter(
+  id: number,
+  updates: CharacterUpdate,
+  token?: string | null,
+): Promise<Character> {
+  const res = await fetch(`${API_BASE}/api/characters/${id}`, {
+    method: "PUT",
+    headers: authHeaders(token),
+    body: JSON.stringify(updates),
+  });
+  if (res.status === 401) throw new Error("Please sign in to edit this character");
+  if (res.status === 403) throw new Error("Only the character creator can edit this card");
+  if (!res.ok) throw new Error(await readErrorDetail(res, "Failed to update character"));
+  return res.json();
+}
+
+export async function fetchCategories(token?: string | null): Promise<string[]> {
+  const res = await fetch(`${API_BASE}/api/characters/categories`, { headers: authHeaders(token) });
   if (!res.ok) return ["Featured"];
   return res.json();
 }
@@ -186,7 +305,48 @@ export async function fetchConversation(
   const res = await fetch(`${API_BASE}/api/chat/conversations/${id}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
-  if (!res.ok) throw new Error("Conversation not found");
+  if (!res.ok) throw new Error(await readErrorDetail(res, "Conversation not found"));
+  return res.json();
+}
+
+export async function updateConversationContext(
+  conversationId: number,
+  scenarioNote: string,
+  token?: string | null,
+): Promise<{
+  id: number;
+  scenario_note: string;
+  current_mood: string | null;
+  intimacy_level: number;
+  streak_days: number;
+}> {
+  const res = await fetch(`${API_BASE}/api/chat/conversations/${conversationId}/context`, {
+    method: "PUT",
+    headers: authHeaders(token),
+    body: JSON.stringify({ scenario_note: scenarioNote }),
+  });
+  if (!res.ok) {
+    throw new Error(await readErrorDetail(res, "Failed to save scenario context"));
+  }
+  return res.json();
+}
+
+export async function illustrateConversation(
+  conversationId: number,
+  token?: string | null,
+  promptHint?: string,
+): Promise<IllustrateResponse> {
+  const res = await fetch(`${API_BASE}/api/chat/conversations/${conversationId}/illustrate`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify(promptHint ? { prompt_hint: promptHint } : {}),
+  });
+  if (res.status === 401) {
+    throw new Error("请先登录（或在已验证的 Telegram Mini App 中打开）后再生成插画 / Sign in required to generate illustrations");
+  }
+  if (!res.ok) {
+    throw new Error(await readErrorDetail(res, "Failed to generate illustration"));
+  }
   return res.json();
 }
 
@@ -212,9 +372,7 @@ export async function checkinConversation(
 }
 
 /**
- * Draw the once-per-day "surprise" (gacha) for a conversation. The backend
- * grants a variable intimacy reward + an in-character line. Tolerant like
- * checkinConversation: on network/!ok error returns { available: false }.
+ * Draw the once-per-day "surprise" (gacha) for a conversation.
  */
 export async function drawSurprise(
   conversationId: number,
@@ -241,7 +399,7 @@ export async function fetchConversations(
   const res = await fetch(`${API_BASE}/api/chat/conversations?${params}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
-  if (!res.ok) return [];
+  if (!res.ok) throw new Error(await readErrorDetail(res, "Failed to load saves"));
   return res.json();
 }
 
@@ -256,18 +414,6 @@ export async function deleteConversation(
   });
   if (!res.ok && res.status !== 404) {
     throw new Error(`Delete failed: ${res.status}`);
-  }
-}
-
-/** Delete ALL conversations for a character (handles sidebar duplicates). */
-export async function deleteAllConversationsForCharacter(
-  characterId: number,
-  token?: string | null,
-): Promise<void> {
-  const convs = await fetchConversations(characterId, token);
-  // Sequential deletes to avoid SQLite lock contention
-  for (const c of convs) {
-    await deleteConversation(c.id, token);
   }
 }
 
@@ -301,9 +447,6 @@ export interface ToolResult {
 
 /**
  * Send a message and stream the AI response via SSE.
- * Calls onChunk for each text chunk, onDone when complete.
- * Optional: onImage for inline image generation, onGeneratingImage when image gen starts.
- * Optional: onIntimacy for intimacy level updates.
  */
 export async function sendMessageStream(
   conversationId: number,
@@ -336,7 +479,7 @@ export async function sendMessageStream(
     );
 
     if (!res.ok) {
-      onError("Failed to send message");
+      onError(await readErrorDetail(res, "Failed to send message"));
       return;
     }
 
@@ -394,11 +537,6 @@ export function resolveImageUrl(url: string): string {
 
 // ── Character Card Import ──
 
-/**
- * Import a character card JSON (either {spec, data:{...}} or flat
- * {name, description, personality, scenario, first_mes, mes_example}).
- * Returns the created Character (has .id). Auth required.
- */
 export async function importCharacterCard(
   card: object,
   token?: string | null,
@@ -409,7 +547,7 @@ export async function importCharacterCard(
     body: JSON.stringify(card),
   });
   if (res.status === 401) throw new Error("Please sign in to import a character");
-  if (!res.ok) throw new Error("Failed to import character card");
+  if (!res.ok) throw new Error(await readErrorDetail(res, "Failed to import character card"));
   return res.json();
 }
 
@@ -441,35 +579,32 @@ export async function deleteMemory(
 
 // ── Operator admin: ops-config ──
 
-/** Build headers for admin requests, attaching the admin token gate when present. */
-function adminHeaders(adminToken?: string | null): HeadersInit {
-  const h: HeadersInit = { "Content-Type": "application/json" };
+export function adminHeaders(adminToken?: string | null, token?: string | null): HeadersInit {
+  const h = authHeaders(token);
   if (adminToken) h["X-Admin-Token"] = adminToken;
   return h;
 }
 
-/** Fetch the operations config. Sends X-Admin-Token when a token is provided. */
-export async function fetchOpsConfig(adminToken?: string | null): Promise<OpsConfig> {
+export async function fetchOpsConfig(adminToken?: string | null, token?: string | null): Promise<OpsConfig> {
   const res = await fetch(`${API_BASE}/api/admin/ops-config`, {
-    headers: adminHeaders(adminToken),
+    headers: adminHeaders(adminToken, token),
   });
   if (res.status === 403) throw new Error("Admin token required or invalid");
   if (!res.ok) throw new Error("Failed to fetch ops config");
   return res.json();
 }
 
-/** Update the operations config with a partial set of changes. Returns the full updated object. */
 export async function updateOpsConfig(
   updates: Partial<OpsConfig>,
   adminToken?: string | null,
+  token?: string | null,
 ): Promise<OpsConfig> {
   const res = await fetch(`${API_BASE}/api/admin/ops-config`, {
     method: "PUT",
-    headers: adminHeaders(adminToken),
+    headers: adminHeaders(adminToken, token),
     body: JSON.stringify(updates),
   });
   if (res.status === 403) throw new Error("Admin token required or invalid");
   if (!res.ok) throw new Error("Failed to update ops config");
   return res.json();
 }
-

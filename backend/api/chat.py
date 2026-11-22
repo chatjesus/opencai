@@ -10,15 +10,28 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 
-from models.database import get_db, Character, CharacterTranslation, Conversation, Message
+from models.database import get_db, Character, CharacterTranslation, Conversation, GeneratedIllustration, Message
 from models.schemas import (
     ConversationCreate, ConversationResponse, ConversationDetail,
     ChatMessageCreate, ChatMessageResponse,
+    ConversationContextUpdate, IllustrateRequest,
 )
 from services.chat_service import generate_reply_stream, process_reply_images, StreamResult
-from services.image_service import extract_image_tags, extract_scene_tags, get_pregenerated_scenes
+from services.image_service import (
+    ImageGenerationError,
+    extract_image_tags,
+    extract_scene_tags,
+    generate_explicit_illustration,
+    get_pregenerated_scenes,
+    should_auto_generate_reply_images,
+    strip_image_tags,
+)
+from services.intimacy_service import augment_image_prompt
+from services.ops_config import get_ops_value, is_image_explicit_allowed
 from services.scene_service import ensure_scenes_background
-from auth.clerk import get_current_user_id
+from auth.clerk import get_current_user_id, require_auth
+from auth.private_beta import private_beta_enabled
+from api.characters import require_character_visible
 
 # Keywords that indicate the user wants to see an image / selfie
 IMAGE_INTENT_RE = re.compile(
@@ -55,6 +68,7 @@ async def create_conversation(
         raise HTTPException(status_code=404, detail="Character not found")
 
     user_id = await get_current_user_id(request)
+    require_character_visible(char, user_id)
     conv = Conversation(
         character_id=data.character_id,
         title=f"Chat with {char.name}",
@@ -89,7 +103,9 @@ async def list_conversations(
 
     user_id = await get_current_user_id(request)
     query = db.query(Conversation).options(joinedload(Conversation.character))
-    if user_id != "anonymous":
+    if private_beta_enabled():
+        query = query.filter(Conversation.clerk_user_id == user_id)
+    elif user_id != "anonymous":
         query = query.filter(
             (Conversation.clerk_user_id == user_id) |
             (Conversation.clerk_user_id == None)  # noqa: E711
@@ -113,6 +129,7 @@ async def list_conversations(
             character_name=char.name if char else "",
             character_avatar=char.avatar_url if char else "",
             intimacy_level=conv.intimacy_level or 0,
+            streak_days=conv.streak_days or 0,
             created_at=conv.created_at,
             updated_at=conv.updated_at,
         ))
@@ -124,7 +141,7 @@ def _ensure_conv_visible(conv: Conversation, user_id: str) -> None:
     are visible to anyone (no identity to verify against). Cross-user reads
     raise 403."""
     owner = conv.clerk_user_id
-    if owner and owner != user_id:
+    if owner != user_id and (owner or private_beta_enabled()):
         raise HTTPException(status_code=403, detail="Not your conversation")
 
 
@@ -158,6 +175,9 @@ async def get_conversation(
             for m in conv.messages
         ],
         intimacy_level=conv.intimacy_level or 0,
+        streak_days=conv.streak_days or 0,
+        current_mood=getattr(conv, "current_mood", None),
+        scenario_note=getattr(conv, "scenario_note", "") or "",
         created_at=conv.created_at,
         updated_at=conv.updated_at,
     )
@@ -175,6 +195,7 @@ async def delete_conversation(
         raise HTTPException(status_code=404, detail="Conversation not found")
     user_id = await get_current_user_id(request)
     _ensure_conv_visible(conv, user_id)
+    db.query(GeneratedIllustration).filter_by(conversation_id=conversation_id).delete()
     db.query(Message).filter(Message.conversation_id == conversation_id).delete()
     db.delete(conv)
     db.commit()
@@ -205,6 +226,7 @@ async def send_message(
     char = db.query(Character).filter(Character.id == conv.character_id).first()
     if not char:
         raise HTTPException(status_code=404, detail="Character not found")
+    require_character_visible(char, user_id)
 
     # Mark user activity so the proactive-recall timer (web_proactive) resets.
     # No explicit commit here: chat_service commits the conversation downstream
@@ -316,18 +338,24 @@ async def send_message(
                     yield f"data: {json.dumps({'image': {'url': url, 'alt': alt}})}\n\n"
 
             elif has_img or has_scene:
-                if has_img:
+                auto_img = bool(
+                    has_img
+                    and should_auto_generate_reply_images()
+                    and get_ops_value(db, "nsfw_images_enabled", True)
+                )
+                if auto_img:
                     yield f"data: {json.dumps({'generating_image': True})}\n\n"
 
-                instant, generated = await process_reply_images(
-                    result.full_reply, conv.id, char.id, char.avatar_url, db,
-                    intimacy_level=intimacy_level,
-                    explicit_unlock_override=char.explicit_unlock_intimacy,
-                )
-                for img in instant:
-                    yield f"data: {json.dumps({'image': img})}\n\n"
-                for img in generated:
-                    yield f"data: {json.dumps({'image': img})}\n\n"
+                if auto_img or has_scene:
+                    instant, generated = await process_reply_images(
+                        result.full_reply, conv.id, char.id, char.avatar_url, db,
+                        intimacy_level=intimacy_level,
+                        explicit_unlock_override=char.explicit_unlock_intimacy,
+                    )
+                    for img in instant:
+                        yield f"data: {json.dumps({'image': img})}\n\n"
+                    for img in generated:
+                        yield f"data: {json.dumps({'image': img})}\n\n"
 
             # ── Tool Call Execution ──────────────────────────────────────────
             if result.tool_call:
@@ -407,7 +435,7 @@ async def send_message(
                 from services.voice_service import synthesize_speech
                 from services.ops_config import is_text_explicit_allowed
                 display_text = result.full_reply or ""
-                if display_text.strip():
+                if display_text.strip() and not private_beta_enabled():
                     # Explicit lines skip cloud MiMo (it moderates them) → local TTS,
                     # so the voice matches the explicit text instead of degrading.
                     audio_url = await synthesize_speech(
@@ -531,7 +559,9 @@ async def checkin(
     )
 
     from services.proactive_greeting import generate_return_greeting
-    greeting = None if already_reached_out else await generate_return_greeting(char, conv, db)
+    greeting = None
+    if not already_reached_out and not private_beta_enabled():
+        greeting = await generate_return_greeting(char, conv, db)
 
     # The user is here now — reset the proactive-recall timer.
     conv.last_active_at = datetime.utcnow()
@@ -589,5 +619,197 @@ async def surprise(
         "intimacy_level": conv.intimacy_level or 0,
         "message": message,
         "message_id": msg.id,
+    }
+
+
+# ── Persisted Scenario Context & Explicit Scene Illustration ─────────────────
+
+_MD_IMAGE_STRIP_RE = re.compile(r"!\[[^\]]*\]\([^)]+\)")
+_APPEARANCE_LINE_RE = re.compile(r"Appearance\s*[:：]\s*([^\n]+)", re.IGNORECASE)
+
+
+def _build_turn_illustration_prompt(
+    char: Character,
+    conv: Conversation,
+    recent_messages: list[Message],
+    prompt_hint: Optional[str],
+    intimacy_level: int,
+    explicit_allowed: bool,
+) -> tuple[str, str]:
+    """
+    Build a concise scene illustration prompt grounded in the character's traits
+    and the conversation's latest turn / active scenario.
+    Returns (final_prompt, short_alt_label).
+    """
+    last_assistant = next((m for m in recent_messages if m.role == "assistant"), None)
+    last_user = next((m for m in recent_messages if m.role == "user"), None)
+
+    appearance = ""
+    if char.system_prompt:
+        m = _APPEARANCE_LINE_RE.search(char.system_prompt)
+        if m:
+            appearance = m.group(1).strip()[:220]
+    if not appearance and char.description:
+        appearance = char.description.strip()[:180]
+
+    # Reuse any unrendered [IMG: ...] description from the latest turn first
+    extracted_tag = ""
+    if last_assistant and last_assistant.content:
+        tags = extract_image_tags(last_assistant.content)
+        if tags:
+            extracted_tag = tags[-1].strip()
+
+    if extracted_tag:
+        core_scene = extracted_tag
+    else:
+        scene_source = (
+            last_assistant.content
+            if (last_assistant and last_assistant.content)
+            else (char.greeting or "")
+        )
+        clean_scene = strip_image_tags(_MD_IMAGE_STRIP_RE.sub("", scene_source)).strip()
+        clean_scene = re.sub(r"\s+", " ", clean_scene)[:280]
+        user_beat = ""
+        if last_user and last_user.content:
+            user_beat = re.sub(r"\s+", " ", last_user.content.strip())[:120]
+
+        parts = [f"anime style story illustration of {char.name}"]
+        if appearance:
+            parts.append(appearance)
+        if getattr(conv, "scenario_note", None):
+            parts.append(f"Setting: {conv.scenario_note.strip()[:140]}")
+        if clean_scene:
+            parts.append(f"Current scene: {clean_scene}")
+        if user_beat:
+            parts.append(f"Moment context: {user_beat}")
+        core_scene = ". ".join(p.rstrip(".") for p in parts if p)
+
+    if prompt_hint and prompt_hint.strip():
+        core_scene = f"{core_scene}. {prompt_hint.strip()[:200]}"
+
+    effective_level = intimacy_level if explicit_allowed else min(intimacy_level, 20)
+    augmented = augment_image_prompt(core_scene, effective_level)
+    alt = f"{char.name} scene illustration"
+    return augmented, alt
+
+
+@router.put("/conversations/{conversation_id}/context")
+async def update_conversation_context(
+    conversation_id: int,
+    data: ConversationContextUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Persist user-edited scenario/story notes on the conversation across turns."""
+    conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    user_id = await get_current_user_id(request)
+    _ensure_conv_visible(conv, user_id)
+
+    conv.scenario_note = (data.scenario_note or "").strip()
+    conv.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(conv)
+    return {
+        "id": conv.id,
+        "scenario_note": conv.scenario_note or "",
+        "current_mood": conv.current_mood,
+        "intimacy_level": conv.intimacy_level or 0,
+        "streak_days": conv.streak_days or 0,
+    }
+
+
+@router.post("/conversations/{conversation_id}/illustrate")
+async def illustrate_conversation_turn(
+    conversation_id: int,
+    request: Request,
+    data: Optional[IllustrateRequest] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Explicitly generate one story illustration tied to the conversation's latest
+    turn / current scene. Requires authentication, conversation ownership, and
+    respects ops_config feature and intimacy gates.
+    """
+    user_id = await get_current_user_id(request)
+    require_auth(user_id)
+
+    conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    _ensure_conv_visible(conv, user_id)
+
+    # Bind unowned anonymous draft conversation to the authenticated caller once used
+    if conv.clerk_user_id is None:
+        conv.clerk_user_id = user_id
+
+    if not get_ops_value(db, "nsfw_images_enabled", True):
+        raise HTTPException(status_code=403, detail="Image generation is currently disabled")
+
+    char = db.query(Character).filter(Character.id == conv.character_id).first()
+    if not char:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    intimacy_level = conv.intimacy_level or 0
+    require_character_visible(char, user_id)
+    explicit_allowed = is_image_explicit_allowed(
+        db, intimacy_level, char.explicit_unlock_intimacy
+    )
+
+    recent_messages = (
+        db.query(Message)
+        .filter(Message.conversation_id == conv.id)
+        .order_by(Message.id.desc())
+        .limit(6)
+        .all()
+    )
+
+    prompt, alt = _build_turn_illustration_prompt(
+        char=char,
+        conv=conv,
+        recent_messages=recent_messages,
+        prompt_hint=data.prompt_hint if data else None,
+        intimacy_level=intimacy_level,
+        explicit_allowed=explicit_allowed,
+    )
+
+    try:
+        url, provider = await generate_explicit_illustration(
+            prompt=prompt,
+            avatar_url=char.avatar_url,
+            character_id=char.id,
+            nsfw=explicit_allowed,
+        )
+    except ImageGenerationError as err:
+        raise HTTPException(status_code=err.status_code, detail=err.detail)
+
+    if url.startswith("/uploads/generated/"):
+        db.add(GeneratedIllustration(path=url, conversation_id=conv.id))
+
+    target_msg = next((m for m in recent_messages if m.role == "assistant"), None)
+    if target_msg is not None:
+        cleaned = strip_image_tags(target_msg.content).rstrip()
+        target_msg.content = f"{cleaned}\n\n![{alt}]({url})" if cleaned else f"![{alt}]({url})"
+        conv.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(target_msg)
+    else:
+        opening = (char.greeting or "").replace("{{char}}", char.name).replace("{{user}}", "You").strip()
+        content = f"{opening}\n\n![{alt}]({url})" if opening else f"![{alt}]({url})"
+        target_msg = Message(
+            conversation_id=conv.id,
+            role="assistant",
+            content=content,
+        )
+        db.add(target_msg)
+        conv.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(target_msg)
+
+    return {
+        "image": {"url": url, "alt": alt},
+        "message_id": target_msg.id,
+        "provider": provider.value,
     }
 

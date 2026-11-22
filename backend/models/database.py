@@ -138,6 +138,8 @@ class Conversation(Base):
     # Persisted emotional state — evolves from interactions and carries across
     # turns (a real person's mood, not a per-turn clock re-roll).
     current_mood = Column(String(80), nullable=True)
+    # Persisted user-editable scenario / story notes injected on every turn.
+    scenario_note = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -158,6 +160,13 @@ class Message(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversation = relationship("Conversation", back_populates="messages")
+
+
+class GeneratedIllustration(Base):
+    __tablename__ = "generated_illustrations"
+
+    path = Column(String(255), primary_key=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id"), nullable=False, index=True)
 
 
 class Favorite(Base):
@@ -247,8 +256,14 @@ class IdentityLink(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # Canonical string identity used by Web auth (e.g. Clerk user_id)
+    canonical_user_id = Column(String(200), nullable=True, index=True)
     platform = Column(String(30), nullable=False)
     platform_user_id = Column(String(200), nullable=False)
+    # Single-use short-lived bind code digest + lifecycle timestamps
+    bind_code_hash = Column(String(128), nullable=True, index=True)
+    expires_at = Column(DateTime, nullable=True)
+    used_at = Column(DateTime, nullable=True)
     verified_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 

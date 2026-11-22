@@ -177,7 +177,13 @@ async def ensure_scenes_background(
     system_prompt: str,
     avatar_url: Optional[str] = None,
 ):
-    """Fire-and-forget: start scene pre-generation in background if not ready."""
+    """Fire-and-forget: start scene pre-generation in background if not ready.
+    Skipped automatically when paid cloud providers (xAI) are configured so
+    conversations never trigger silent paid LLM/image calls in the background."""
+    from services.image_service import should_auto_generate_reply_images
+    from services.llm_service import get_llm_provider
+    if not should_auto_generate_reply_images() or get_llm_provider() == "xai":
+        return
     if scenes_ready(character_id):
         return
     try:

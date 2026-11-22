@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { UserButton, useAuth } from "@clerk/nextjs";
+import { AccountStatusControl, useAppAuth } from "@/contexts/AuthContext";
 import {
   fetchHealth,
   fetchConversations,
-  deleteAllConversationsForCharacter,
+  deleteConversation,
   type HealthStatus,
   type Conversation,
 } from "@/lib/api";
@@ -87,12 +87,12 @@ function ChatAvatar({ conv, size = 28, active }: { conv: Conversation; size?: nu
 // ── Timeline component ──────────────────────────────────────────────────────
 
 function ChatTimeline({
-  chats, pathname, openMenuId, deletingCharId, onMenuToggle, onDelete, t,
+  chats, currentChatId, openMenuId, deletingId, onMenuToggle, onDelete, t,
 }: {
   chats: Conversation[];
-  pathname: string;
+  currentChatId: number | undefined;
   openMenuId: number | null;
-  deletingCharId: number | null;
+  deletingId: number | null;
   onMenuToggle: (id: number) => void;
   onDelete: (conv: Conversation) => void;
   t: ReturnType<typeof import("@/contexts/I18nContext").useI18n>["t"];
@@ -108,10 +108,10 @@ function ChatTimeline({
           </p>
           <div className="space-y-0.5">
             {group.items.map((conv) => {
-              const chatPath = `/chat/${conv.character_id}`;
-              const active = pathname === chatPath;
+              const chatPath = `/chat/${conv.character_id}?conversation=${conv.id}`;
+              const active = currentChatId === conv.id;
               const isMenuOpen = openMenuId === conv.id;
-              const isDeleting = deletingCharId === conv.character_id;
+              const isDeleting = deletingId === conv.id;
               const name = conv.character_name || conv.title;
               return (
                 <div key={conv.id} className="relative group">
@@ -181,14 +181,16 @@ function ChatTimeline({
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const { t, locale, setLocale } = useI18n();
-  const { getToken, isSignedIn } = useAuth();
+  const { getToken, isLoaded } = useAppAuth();
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [recentChats, setRecentChats] = useState<Conversation[]>([]);
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
-  const [deletingCharId, setDeletingCharId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [showMobileHistory, setShowMobileHistory] = useState(false);
   const [showLangPicker, setShowLangPicker] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const langRef = useRef<HTMLDivElement>(null);
@@ -207,18 +209,11 @@ export default function Sidebar() {
   }, []);
 
   const loadChats = useCallback(() => {
+    if (!isLoaded) return;
     getToken().then((token) => fetchConversations(undefined, token))
-      .then((convs) => {
-        const seen = new Map<number, Conversation>();
-        for (const conv of convs) {
-          const ex = seen.get(conv.character_id);
-          if (!ex || conv.id > ex.id) seen.set(conv.character_id, conv);
-        }
-        const deduped = Array.from(seen.values()).sort((a, b) => b.id - a.id).slice(0, 8);
-        setRecentChats(deduped);
-      })
-      .catch(() => {});
-  }, []);
+      .then(setRecentChats)
+      .catch(() => setRecentChats([]));
+  }, [getToken, isLoaded]);
 
   useEffect(() => { loadChats(); }, [pathname, loadChats]);
 
@@ -228,25 +223,60 @@ export default function Sidebar() {
     return () => window.removeEventListener("conversation-ready", handler);
   }, [loadChats]);
 
+  const requestedChat = searchParams.get("conversation");
+  const currentChatId = pathname.startsWith("/chat/") ? (
+    requestedChat ? Number(requestedChat) :
+      recentChats.find((chat) => pathname === `/chat/${chat.character_id}`)?.id
+  ) : undefined;
+
   const handleDelete = async (conv: Conversation) => {
     setOpenMenuId(null);
-    setDeletingCharId(conv.character_id);
+    setDeletingId(conv.id);
     try {
       const token = await getToken();
-      await deleteAllConversationsForCharacter(conv.character_id, token);
-      if (pathname === `/chat/${conv.character_id}`) router.push("/");
+      await deleteConversation(conv.id, token);
+      if (currentChatId === conv.id) router.push("/");
       loadChats();
     } catch { /* ignore */ } finally {
-      setDeletingCharId(null);
+      setDeletingId(null);
     }
   };
 
   const currentLang = LOCALES.find(l => l.code === locale);
   const isActive = (href: string) => href === "/" ? pathname === "/" : pathname.startsWith(href);
+  const modelReady = health?.llm_healthy ?? health?.ollama === "connected";
+  const accountLabel = (t.sidebar as Record<string, string>).account || "My Account";
+  const signInLabel = (t.sidebar as Record<string, string>).signIn || "Sign In";
+  const settingsLabel = (t.sidebar as Record<string, string>).settings || "Settings";
 
   return (
+    <>
+    <header className="md:hidden shrink-0 flex items-center gap-4 px-4 py-2.5 border-b border-[var(--card-border)] bg-[var(--sidebar-bg)]">
+      <Link href="/" className="font-bold tracking-tight mr-auto">opencai</Link>
+      {recentChats.length > 0 && <button type="button" aria-expanded={showMobileHistory}
+        onClick={() => setShowMobileHistory(!showMobileHistory)} className="text-xs text-[var(--muted)]">
+        {locale.startsWith("zh") ? "存档" : "Saves"}
+      </button>}
+      <Link href="/create" className="text-xs text-[var(--muted)]">{t.sidebar.createCharacter}</Link>
+      <Link href="/settings" className="text-xs text-[var(--muted)]">{settingsLabel}</Link>
+      <AccountStatusControl compact accountLabel={accountLabel} signInLabel={signInLabel} />
+    </header>
+    {showMobileHistory && (
+      <nav className="md:hidden shrink-0 max-h-44 overflow-y-auto border-b border-[var(--card-border)] px-4 py-2">
+        {recentChats.map((conv) => (
+          <Link key={conv.id} href={`/chat/${conv.character_id}?conversation=${conv.id}`}
+            onClick={() => setShowMobileHistory(false)} aria-current={currentChatId === conv.id ? "page" : undefined}
+            className="flex justify-between gap-2 py-2 text-sm">
+            <span className="truncate">{conv.character_name || conv.title}</span>
+            <time className="shrink-0 text-xs text-[var(--muted)]" dateTime={conv.updated_at}>
+              {new Date(conv.updated_at).toLocaleString(locale)}
+            </time>
+          </Link>
+        ))}
+      </nav>
+    )}
     <aside
-      className={`${collapsed ? "w-16" : "w-56"} h-screen flex flex-col border-r transition-all duration-200 flex-shrink-0`}
+      className={`${collapsed ? "w-16" : "w-56"} h-full hidden md:flex flex-col border-r transition-all duration-200 flex-shrink-0`}
       style={{ background: "var(--sidebar-bg)", borderColor: "var(--card-border)" }}
     >
       {/* Logo */}
@@ -300,9 +330,9 @@ export default function Sidebar() {
         <div className="flex-1 overflow-y-auto mt-3 px-2" ref={menuRef}>
           <ChatTimeline
             chats={recentChats}
-            pathname={pathname}
+            currentChatId={currentChatId}
             openMenuId={openMenuId}
-            deletingCharId={deletingCharId}
+            deletingId={deletingId}
             onMenuToggle={(id) => setOpenMenuId(openMenuId === id ? null : id)}
             onDelete={handleDelete}
             t={t}
@@ -314,8 +344,8 @@ export default function Sidebar() {
       {collapsed && recentChats.length > 0 && (
         <div className="flex-1 overflow-y-auto py-2 flex flex-col items-center gap-1.5">
           {recentChats.map((conv) => {
-            const chatPath = `/chat/${conv.character_id}`;
-            const active = pathname === chatPath;
+            const chatPath = `/chat/${conv.character_id}?conversation=${conv.id}`;
+            const active = currentChatId === conv.id;
             return (
               <Link key={conv.id} href={chatPath} title={conv.character_name || conv.title}>
                 <ChatAvatar conv={conv} size={32} active={active} />
@@ -371,52 +401,30 @@ export default function Sidebar() {
       )}
 
       {/* User account */}
-      <div className="px-3 mb-2 flex-shrink-0">
-        {!collapsed ? (
-          <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--card-border)" }}>
-            <UserButton
-              appearance={{
-                elements: {
-                  avatarBox: "w-6 h-6",
-                  userButtonPopoverCard: "bg-[var(--card-bg)] border border-[var(--card-border)]",
-                },
-              }}
-            />
-            {isSignedIn && (
-              <span className="text-[11px] truncate" style={{ color: "var(--muted)" }}>
-                {(t.sidebar as Record<string, string>).account || "My Account"}
-              </span>
-            )}
-            {!isSignedIn && (
-              <Link href="/sign-in" className="text-[11px] transition-colors hover:text-white" style={{ color: "var(--accent)" }}>
-                {(t.sidebar as Record<string, string>).signIn || "Sign In"}
-              </Link>
-            )}
-          </div>
-        ) : (
-          <div className="flex justify-center">
-            <UserButton appearance={{ elements: { avatarBox: "w-6 h-6" } }} />
-          </div>
-        )}
+      <div className={`px-3 mb-2 flex-shrink-0 ${collapsed ? "flex justify-center" : ""}`}>
+        <AccountStatusControl compact={collapsed} accountLabel={accountLabel} signInLabel={signInLabel} />
       </div>
 
       {/* Status footer */}
       <div className="p-3 border-t text-xs flex-shrink-0" style={{ borderColor: "var(--card-border)" }}>
         {!collapsed ? (
           <div className="flex items-center gap-2">
-            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${health?.ollama === "connected" ? "bg-green-500" : "bg-red-500"}`}
-              style={health?.ollama === "connected" ? { boxShadow: "0 0 4px rgba(34,197,94,0.5)" } : undefined}
+            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${modelReady ? "bg-green-500" : "bg-red-500"}`}
+              style={modelReady ? { boxShadow: "0 0 4px rgba(34,197,94,0.5)" } : undefined}
             />
             <span className="text-[10px] truncate" style={{ color: "var(--muted)" }}>
-              {health?.ollama === "connected" ? t.sidebar.online : t.sidebar.offline}
+              {health?.llm_provider === "xai" && health.llm_status === "configured"
+                ? "Grok · API configured"
+                : modelReady ? t.sidebar.online : t.sidebar.offline}
             </span>
           </div>
         ) : (
           <div className="flex justify-center">
-            <span className={`w-1.5 h-1.5 rounded-full ${health?.ollama === "connected" ? "bg-green-500" : "bg-red-500"}`} />
+            <span className={`w-1.5 h-1.5 rounded-full ${modelReady ? "bg-green-500" : "bg-red-500"}`} />
           </div>
         )}
       </div>
     </aside>
+    </>
   );
 }

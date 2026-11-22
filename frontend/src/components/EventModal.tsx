@@ -4,6 +4,8 @@
  * Displays the scene description and 3 choices; sends the user's pick to backend.
  */
 import { useState } from "react";
+import { useAppAuth } from "@/contexts/AuthContext";
+import { authHeaders } from "@/lib/api";
 
 export interface EventChoice {
   text: string;
@@ -48,6 +50,7 @@ export default function EventModal({
   onResolved,
   onDismiss,
 }: EventModalProps) {
+  const { getToken } = useAppAuth();
   const [selected, setSelected] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [reaction, setReaction] = useState<string | null>(null);
@@ -62,7 +65,7 @@ export default function EventModal({
     try {
       const res = await fetch(`${API_BASE}/api/events/choose`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(await getToken()),
         body: JSON.stringify({
           instance_id: event.instance_id,
           choice_index: index,
@@ -70,6 +73,7 @@ export default function EventModal({
         }),
       });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Unable to save choice");
       setReaction(data.reaction || "");
       setRevealed(true);
       onResolved(data.reaction || "", data.intimacy_delta ?? 0, data.intimacy_level ?? 0);

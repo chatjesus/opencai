@@ -148,9 +148,22 @@ Open **http://localhost:3000**
 Copy `backend/.env.example` → `backend/.env`. Key variables:
 
 ```env
-# LLM
+# LLM (Default: local Ollama; Opt-in: xAI Grok)
+LLM_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=huihui_ai/qwen2.5-abliterate:14b
+# Opt-in xAI text (official api.x.ai/v1/chat/completions):
+# LLM_PROVIDER=xai
+# XAI_API_KEY=...
+# XAI_MODEL=grok-4.3
+# XAI_MAX_TOKENS=600
+
+# Image Generation (Default: auto local ComfyUI; Opt-in: xAI Grok Imagine)
+IMAGE_PROVIDER=auto
+# Opt-in xAI explicit scene illustrations (grok-imagine-image-2.0, 1k, low, 1:1):
+# IMAGE_PROVIDER=xai
+# XAI_IMAGE_API_KEY=...
+# XAI_IMAGE_MODEL=grok-imagine-image-2.0
 
 # Image Storage (optional — defaults to local disk)
 R2_ACCOUNT_ID=...
@@ -159,12 +172,27 @@ R2_SECRET_KEY=...
 R2_BUCKET=clawfans
 R2_PUBLIC_URL=https://your-domain.dev
 
-# Auth (optional — Clerk)
+# Auth & Admin (optional for local dev; recommended for shared beta)
 CLERK_SECRET_KEY=sk_test_...
+OPS_ADMIN_TOKEN=...
 
-# Telegram Bot (optional)
+# Telegram Bot & Mini App (optional)
 TELEGRAM_BOT_TOKEN=...
+TELEGRAM_WEBAPP_ENABLED=true
+TELEGRAM_WEBAPP_URL=https://your-domain.example.com
+TELEGRAM_WEBAPP_ALLOWLIST_REQUIRED=true
+TELEGRAM_ALLOWED_USER_IDS=123456789
+# Optional static Telegram->Web account map (or use one-time /bind codes):
+# TELEGRAM_USER_LINKS=123456789:user_2abcXYZ
 ```
+
+### Telegram Mini App Menu Button Setup (Configuration Only)
+
+To open the responsive web UI inside Telegram as a Mini App:
+1. Serve the frontend over HTTPS (e.g. `https://your-domain.example.com`, with `/api/*` and `/uploads/*` proxied to the backend as configured in `frontend/next.config.ts`).
+2. Set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBAPP_ENABLED=true`, and `TELEGRAM_ALLOWED_USER_IDS=<comma-separated Telegram numeric IDs>` in `backend/.env`.
+3. In Telegram `@BotFather`, run `/setmenubutton`, choose your bot, and point the Menu Button URL to your HTTPS frontend origin (`TELEGRAM_WEBAPP_URL`).
+4. To share conversations and memories between ordinary Web login and Telegram Mini App, generate a single-use 10-minute code in **Settings → Account Link** on Web and redeem it via `/bind <code>` or inside the Mini App Settings screen (or configure `TELEGRAM_USER_LINKS` / `PUT /api/admin/telegram-links`).
 
 ### Frontend Environment Variables
 

@@ -16,6 +16,11 @@ from telegram.ext import (
 )
 from telegram.constants import ChatAction
 
+from auth.telegram_webapp import (
+    TelegramAuthError,
+    is_telegram_user_allowed,
+    redeem_telegram_bind_code,
+)
 from channels.telegram.config import TELEGRAM_BOT_TOKEN, TELEGRAM_CONFIG
 from gateway.contracts import InboundEvent, AgentReply, Platform
 from gateway.handler import handle_inbound
@@ -128,16 +133,35 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_bind(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /bind <code>: link Telegram to web account."""
+    """Handle /bind <code>: link Telegram identity to an authenticated Web account."""
+    if not update.effective_user or not update.message:
+        return
+    tg_uid = update.effective_user.id
+    if not is_telegram_user_allowed(tg_uid, webapp=False) and (
+        TELEGRAM_CONFIG.get("allowlist_mode") and tg_uid not in TELEGRAM_CONFIG.get("allowed_user_ids", [])
+    ):
+        await update.message.reply_text("Access denied. Contact the admin.")
+        return
+
     code = " ".join(context.args).strip() if context.args else ""
     if not code:
-        await update.message.reply_text("Usage: /bind <code>\nGet a bind code from the web app.")
+        await update.message.reply_text(
+            "Usage: /bind <code>\nGenerate a one-time bind code from Settings in the web app."
+        )
         return
-    # M4 will implement actual binding logic
-    await update.message.reply_text(
-        f"Bind code received: {code}\n"
-        f"[Binding will be available after M4 implementation]"
-    )
+
+    db = await _get_db()
+    try:
+        redeem_telegram_bind_code(db, tg_uid, code)
+        await update.message.reply_text(
+            "Account linked! Your Telegram Mini App and Web sessions now share the same conversations and memories."
+        )
+    except TelegramAuthError as err:
+        await update.message.reply_text(f"Could not link account: {err.detail}")
+    except Exception:
+        await update.message.reply_text("Could not complete account link. Please try again.")
+    finally:
+        db.close()
 
 
 # ── Message Handler ──────────────────────────────────────────────────────────
@@ -153,11 +177,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
-    # Allowlist check
-    if TELEGRAM_CONFIG["allowlist_mode"]:
-        if int(user_id) not in TELEGRAM_CONFIG["allowed_user_ids"]:
-            await update.message.reply_text("Access denied. Contact the admin.")
-            return
+    # Allowlist check (honors env TELEGRAM_ALLOWED_USER_IDS + TELEGRAM_CONFIG)
+    if (TELEGRAM_CONFIG["allowlist_mode"] and int(user_id) not in TELEGRAM_CONFIG["allowed_user_ids"]) or (
+        not is_telegram_user_allowed(int(user_id), webapp=False)
+    ):
+        await update.message.reply_text("Access denied. Contact the admin.")
+        return
 
     # Send typing indicator
     await update.message.chat.send_action(ChatAction.TYPING)

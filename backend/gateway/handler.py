@@ -83,4 +83,17 @@ def _handle_command(event: InboundEvent, db: DBSession) -> AgentReply:
             session_id=session.id,
         )
 
+    if cmd == "bind":
+        code = (event.command_args or "").strip()
+        if not code:
+            return AgentReply(text="Usage: /bind <code>\nGenerate a one-time bind code from Settings in the web app.")
+        if event.platform.value != "telegram":
+            return AgentReply(text="Account binding via /bind is only supported on Telegram.")
+        from auth.telegram_webapp import TelegramAuthError, redeem_telegram_bind_code
+        try:
+            redeem_telegram_bind_code(db, event.platform_user_id, code)
+            return AgentReply(text="Account linked! Your Telegram and Web sessions now share the same owner.")
+        except TelegramAuthError as err:
+            return AgentReply(text=f"Could not link account: {err.detail}")
+
     return AgentReply(text=f"Unknown command: /{cmd}")

@@ -13,6 +13,7 @@ class CharacterCreate(BaseModel):
     description: str = ""
     system_prompt: str = Field(..., min_length=1)
     greeting: str = "Hello! How can I help you today?"
+    backstory: str = ""
     avatar_url: str = ""
     tags: str = ""          # comma-separated, e.g. "Romance,Fantasy"
     category: str = "Featured"
@@ -24,6 +25,7 @@ class CharacterUpdate(BaseModel):
     description: Optional[str] = None
     system_prompt: Optional[str] = None
     greeting: Optional[str] = None
+    backstory: Optional[str] = None
     avatar_url: Optional[str] = None
     tags: Optional[str] = None
     category: Optional[str] = None
@@ -38,6 +40,7 @@ class CharacterResponse(BaseModel):
     description: str
     system_prompt: str
     greeting: str
+    backstory: str = ""
     avatar_url: str
     tags: str
     category: str
@@ -45,6 +48,7 @@ class CharacterResponse(BaseModel):
     message_count: int
     star_count: int
     creator_id: Optional[int]
+    can_edit: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -109,10 +113,20 @@ class ConversationDetail(BaseModel):
     messages: list[ChatMessageResponse] = []
     intimacy_level: int = 0
     streak_days: int = 0
+    current_mood: Optional[str] = None
+    scenario_note: str = ""
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ConversationContextUpdate(BaseModel):
+    scenario_note: str = Field(default="", max_length=4000)
+
+
+class IllustrateRequest(BaseModel):
+    prompt_hint: Optional[str] = Field(default=None, max_length=500)
 
 
 # ── Auth Schemas ──

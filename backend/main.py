@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from models.database import init_db, SessionLocal, Character
 from api.characters import router as characters_router
@@ -28,7 +29,10 @@ from api.auth import router as auth_router
 from api.upload import router as upload_router
 from api.gateway_api import router as gateway_router
 from api.settings import router as settings_router
-from services.llm_service import check_ollama_health, list_models
+from services.llm_service import get_llm_health
+from services.image_service import get_image_provider_health
+from auth.telegram_webapp import is_telegram_webapp_enabled
+from auth.private_beta import enforce_private_beta, private_beta_enabled
 
 
 def seed_characters(db):
@@ -500,19 +504,25 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
-    # Check Ollama
-    if await check_ollama_health():
-        models = await list_models()
-        print(f"[OK] Ollama is running. Available models: {models}")
-    else:
+    # Check configured LLM provider health (no paid upstream probes)
+    llm_health = await get_llm_health()
+    if llm_health["healthy"]:
+        print(
+            f"[OK] LLM provider '{llm_health['provider']}' ready "
+            f"({llm_health['status']}). Models: {llm_health['models']}"
+        )
+    elif llm_health["provider"] == "ollama":
         print("[WARN] Ollama is not running. Start it with: ollama serve")
         print("       Then pull a model: ollama pull qwen2.5:14b")
+    else:
+        print(f"[WARN] LLM provider '{llm_health['provider']}': {llm_health.get('detail') or llm_health['status']}")
 
-    # Start background scheduler
     import asyncio
-    from scheduler.runner import scheduler_loop
-    scheduler_task = asyncio.create_task(scheduler_loop(interval_seconds=30))
-    print("[OK] Scheduler started")
+    scheduler_task = None
+    if not private_beta_enabled():
+        from scheduler.runner import scheduler_loop
+        scheduler_task = asyncio.create_task(scheduler_loop(interval_seconds=30))
+        print("[OK] Scheduler started")
 
     # Initialize tool registry
     from actions.registry import get_tool_registry
@@ -532,7 +542,8 @@ async def lifespan(app: FastAPI):
 
     yield
     # Shutdown
-    scheduler_task.cancel()
+    if scheduler_task:
+        scheduler_task.cancel()
     try:
         from api.settings import _stop_telegram
         await _stop_telegram()
@@ -547,6 +558,9 @@ app = FastAPI(
     version="0.2.0",
     lifespan=lifespan,
 )
+
+if private_beta_enabled():
+    app.add_middleware(BaseHTTPMiddleware, dispatch=enforce_private_beta)
 
 # CORS – allow the Next.js frontend (local dev + production)
 def get_allowed_origins() -> list[str]:
@@ -614,12 +628,22 @@ async def root():
 
 @app.get("/api/health")
 async def health_check():
-    """Health check endpoint."""
-    ollama_ok = await check_ollama_health()
-    models = await list_models() if ollama_ok else []
+    """Health check endpoint (honest provider status without paid probes)."""
+    llm = await get_llm_health()
+    img = await get_image_provider_health()
     return {
-        "status": "ok",
-        "ollama": "connected" if ollama_ok else "disconnected",
-        "models": models,
+        "status": "ok" if llm["healthy"] else "degraded",
+        "ollama": llm["ollama"],
+        "models": llm["models"],
+        "llm_provider": llm["provider"],
+        "llm_status": llm["status"],
+        "llm_healthy": llm["healthy"],
+        "llm_detail": llm.get("detail"),
+        "image_provider": img["provider"],
+        "image_status": img["status"],
+        "image_healthy": img["healthy"],
+        "image_model": img.get("model"),
+        "image_detail": img.get("detail"),
+        "telegram_webapp_enabled": is_telegram_webapp_enabled(),
     }
 

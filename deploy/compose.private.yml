@@ -1,0 +1,37 @@
+name: opencai-private
+
+services:
+  backend:
+    build: ../backend
+    restart: unless-stopped
+    env_file: ../backend/.env.production
+    environment:
+      DATABASE_URL: sqlite:////app/data/opencai.db
+      OPENCAI_PRIVATE_BETA: "true"
+      ALLOWED_ORIGINS: https://opencai.date
+    volumes:
+      - data:/app/data
+      - uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        BACKEND_URL: http://backend:8000
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?Set the Clerk public key in frontend/.env.production}
+    restart: unless-stopped
+    env_file: ../frontend/.env.production
+    ports:
+      - "127.0.0.1:3300:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  data:
+  uploads:

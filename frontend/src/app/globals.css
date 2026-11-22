@@ -1,10 +1,10 @@
 @import "tailwindcss";
 
-/* ── ClawFans Design Tokens ── */
-/* Inspired by SynClub's warm coral/rose palette, adapted for adult dark theme */
+/* ── opencai Design Tokens ── */
 :root {
   --background: #100c0e;
   --foreground: #f0e8ec;
+  --text: #f0e8ec;
   --card-bg: #1a1216;
   --card-border: #2e1f26;
   --sidebar-bg: #0e0a0c;
@@ -21,6 +21,7 @@
   --tag-text: #f4a0b0;
   --nsfw-badge: #ef4444;
   --online-dot: #4ade80;
+  --app-height: 100dvh;
 }
 
 @theme inline {
@@ -28,10 +29,66 @@
   --color-foreground: var(--foreground);
 }
 
+html,
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans, 'Segoe UI', Arial, Helvetica, sans-serif);
+  font-family: var(--font-sans, 'Segoe UI', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', sans-serif);
+  overscroll-behavior-y: none;
+}
+
+/* Dynamic viewport shell for mobile browsers & Telegram Mini App */
+.app-viewport-shell {
+  height: var(--app-height, 100dvh);
+  max-height: var(--app-height, 100dvh);
+}
+
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.safe-bottom {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+}
+
+/* ── Narrative Reading Layout ── */
+.narrative-turn {
+  background: linear-gradient(180deg, rgba(26, 18, 22, 0.96) 0%, rgba(20, 13, 17, 0.96) 100%);
+  border: 1px solid var(--card-border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+}
+
+.narrative-prose {
+  font-size: 0.95rem;
+  line-height: 1.82;
+  letter-spacing: 0.012em;
+  color: var(--foreground);
+  word-break: break-word;
+}
+
+.narrative-prose p + p {
+  margin-top: 0.8rem;
+}
+
+.narrative-narration {
+  color: var(--accent-2);
+  font-style: italic;
+  opacity: 0.9;
+}
+
+.narrative-dialogue {
+  color: var(--foreground);
+}
+
+.narrative-user-turn {
+  background: linear-gradient(135deg, rgba(232, 96, 122, 0.22), rgba(192, 64, 90, 0.16));
+  border: 1px solid rgba(232, 96, 122, 0.35);
+  color: var(--foreground);
+}
+
+.narrative-scene-card {
+  border: 1px solid rgba(244, 160, 176, 0.22);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
 }
 
 ::selection {
@@ -61,13 +118,18 @@ body {
   animation: fadeIn 0.15s ease-in;
 }
 
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* TTS equalizer bar animation */
 @keyframes tts-bar {
   from { transform: scaleY(0.3); }
   to   { transform: scaleY(1); }
 }
 
-/* Card hover lift — SynClub style */
+/* Card hover lift */
 .card-hover-lift {
   transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
 }

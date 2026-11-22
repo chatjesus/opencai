@@ -37,11 +37,14 @@ def card_to_character_fields(card: dict) -> dict:
     personality = _clean(data.get("personality"))
     description = _clean(data.get("description"))
     scenario = _clean(data.get("scenario"))
+    card_sys_prompt = _clean(data.get("system_prompt"))
     mes_example = _clean(data.get("mes_example"))
     first_mes = _clean(data.get("first_mes"))
 
     # Assemble labeled system_prompt sections, skipping empty ones.
     sections: list[str] = []
+    if card_sys_prompt:
+        sections.append(card_sys_prompt)
     if personality:
         sections.append(f"Personality: {personality}")
     if description:

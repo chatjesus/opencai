@@ -1,12 +1,20 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
+import { Suspense } from "react";
+import Script from "next/script";
 import "./globals.css";
-import { ClerkProvider } from "@clerk/nextjs";
 import Sidebar from "@/components/Sidebar";
 import { I18nProvider } from "@/contexts/I18nContext";
+import { AppAuthShell } from "@/contexts/AuthContext";
 
 export const metadata: Metadata = {
   title: "opencai — Uncensored AI Companions",
-  description: "Private, uncensored AI character chat. Powered by local LLM.",
+  description: "Private AI character stories & illustrations across Web and Telegram Mini App.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -15,19 +23,20 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider>
-      <html lang="en" className="dark">
-        <body className="antialiased font-sans" suppressHydrationWarning>
+    <html lang="en" className="dark">
+      <body className="antialiased font-sans" suppressHydrationWarning>
+        <Script src="https://telegram.org/js/telegram-web-app.js" strategy="beforeInteractive" />
+        <AppAuthShell>
           <I18nProvider>
-            <div className="flex h-screen overflow-hidden">
-              <Sidebar />
-              <main className="flex-1 overflow-hidden">
+            <div className="app-viewport-shell flex flex-col md:flex-row overflow-hidden">
+              <Suspense><Sidebar /></Suspense>
+              <main className="flex-1 min-h-0 min-w-0 overflow-hidden">
                 {children}
               </main>
             </div>
           </I18nProvider>
-        </body>
-      </html>
-    </ClerkProvider>
+        </AppAuthShell>
+      </body>
+    </html>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@clerk/nextjs";
+import { useAppAuth } from "@/contexts/AuthContext";
 import { createCharacter, importCharacterCard } from "@/lib/api";
 import { useT } from "@/contexts/I18nContext";
 
@@ -20,6 +20,7 @@ const TEMPLATES = [
 
 function AvatarUploader({ value, onChange }: { value: string; onChange: (url: string) => void }) {
   const t = useT();
+  const { getToken } = useAppAuth();
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -34,7 +35,12 @@ function AvatarUploader({ value, onChange }: { value: string; onChange: (url: st
       const formData = new FormData();
       formData.append("file", file);
       const apiBase = (process.env.NEXT_PUBLIC_API_URL !== undefined && process.env.NEXT_PUBLIC_API_URL !== "undefined") ? process.env.NEXT_PUBLIC_API_URL : "";
-      const res = await fetch(`${apiBase}/api/upload/avatar`, { method: "POST", body: formData });
+      const token = await getToken();
+      const res = await fetch(`${apiBase}/api/upload/avatar`, {
+        method: "POST",
+        body: formData,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (!res.ok) { const err = await res.json(); throw new Error(err.detail || t.create.uploaderFailed); }
       const data = await res.json();
       onChange(apiBase + data.url);
@@ -43,7 +49,7 @@ function AvatarUploader({ value, onChange }: { value: string; onChange: (url: st
     } finally {
       setUploading(false);
     }
-  }, [onChange]);
+  }, [getToken, onChange, t.create.uploaderFailed, t.create.uploaderInvalidType, t.create.uploaderTooLarge]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0]; if (f) upload(f); };
   const handleDrop = (e: React.DragEvent) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files?.[0]; if (f) upload(f); };
@@ -130,7 +136,7 @@ function AvatarUploader({ value, onChange }: { value: string; onChange: (url: st
 export default function CreatePage() {
   const router = useRouter();
   const t = useT();
-  const { getToken } = useAuth();
+  const { getToken } = useAppAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({

@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAppAuth } from "@/contexts/AuthContext";
 
 // Empty = relative same-origin URLs (proxied to the backend by next.config),
 // so audio loads through the tunnel domain for external users.
@@ -35,6 +36,7 @@ function cleanForTts(text: string): string {
 }
 
 export function AudioPlayer({ text, charId, autoPlay = false }: Props) {
+  const { getToken } = useAppAuth();
   const [state, setState] = useState<State>("idle");
   const [errMsg, setErrMsg] = useState("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -82,10 +84,15 @@ export function AudioPlayer({ text, charId, autoPlay = false }: Props) {
     }, 25000);
 
     try {
+      const token = await getToken();
       const res = await fetch(`${API_BASE}/api/voice/synthesize`, {
         method: "POST",
         signal: ctrl.signal,
-        headers: { "Content-Type": "application/json", "Accept": "audio/mpeg, audio/*" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "audio/mpeg, audio/*",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ text: cleanText, character_id: charId }),
       });
 
@@ -151,7 +158,7 @@ export function AudioPlayer({ text, charId, autoPlay = false }: Props) {
     } finally {
       clearTimeout(timeoutId);
     }
-  }, [cleanText, charId, state, stop]);
+  }, [cleanText, charId, getToken, state, stop]);
 
   useEffect(() => {
     if (autoPlay) {

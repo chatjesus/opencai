@@ -1,7 +1,11 @@
 "use client";
 import { SignIn } from "@clerk/nextjs";
+import { IS_CLERK_CONFIGURED } from "@/contexts/AuthContext";
 
 export default function SignInPage() {
+  if (!IS_CLERK_CONFIGURED) {
+    return <p className="p-6">Web sign-in is unavailable on this instance.</p>;
+  }
   return (
     <div className="flex h-full items-center justify-center">
       <SignIn

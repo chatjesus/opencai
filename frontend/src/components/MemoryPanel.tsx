@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useAuth } from "@clerk/nextjs";
+import { useAppAuth } from "@/contexts/AuthContext";
 import { fetchMemories, deleteMemory, type Memory } from "@/lib/api";
 
 interface Props {
@@ -13,7 +13,7 @@ interface Props {
  * each removable. Auth required (uses the Clerk token).
  */
 export default function MemoryPanel({ characterId }: Props) {
-  const { getToken } = useAuth();
+  const { getToken } = useAppAuth();
   const [memories, setMemories] = useState<Memory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
